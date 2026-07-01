@@ -1,0 +1,19 @@
+# The Trader — Binance USDⓈ-M Futures bot (testnet-first)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-binance==1.0.29
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+aiosqlite==0.20.0
+httpx==0.28.1
+pandas==2.2.3
+numpy==2.2.1
+# Self-learning ML — scikit-learn is the guaranteed baseline (LogisticRegression).
+scikit-learn==1.6.1
+joblib==1.4.2
+# Optional, preferred ML model — falls back to scikit-learn if absent:  pip install lightgbm
+# lightgbm
+# Optional — technical indicators. The indicator engine falls back to plain
+# pandas if this is absent, so it's not required. To add it:  pip install pandas-ta
+# pandas-ta
