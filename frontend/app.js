@@ -116,6 +116,14 @@ function fmtTime(iso) {
   return d.toLocaleTimeString('en-US', { hour12: false });
 }
 function pnlClass(v) { return isNum(v) && v < 0 ? 'down' : isNum(v) && v > 0 ? 'up' : ''; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+/* position notional: prefer explicit field, else |size × mark| */
+function posNotional(p) {
+  if (!p) return 0;
+  if (isNum(p.notional)) return Math.abs(p.notional);
+  if (isNum(p.size) && isNum(p.mark_price)) return Math.abs(p.size * p.mark_price);
+  return 0;
+}
 
 function setWithFlash(node, key, newText, numeric) {
   if (!node) return;
@@ -227,6 +235,8 @@ function renderAccount(a) {
   const dpFoot = $('#card-daily [data-field-foot]');
   dpFoot.className = `card-foot ${pnlClass(get('daily_pnl_pct'))}`;
   dpFoot.textContent = fmtPct(get('daily_pnl_pct'), true);
+
+  renderBotSummary();
 }
 
 /* ============================================================
@@ -324,7 +334,7 @@ function renderPositions(list) {
   $('#posCount').textContent = arr.length;
 
   body.innerHTML = '';
-  if (arr.length === 0) { empty.style.display = 'block'; return; }
+  if (arr.length === 0) { empty.style.display = 'block'; renderBotSummary(); return; }
   empty.style.display = 'none';
 
   // optional click-to-sort (uPnL / notional, desc)
@@ -360,6 +370,7 @@ function renderPositions(list) {
     body.append(tr);
     drawLiqBar(tr.querySelector('.liq-bar'), p.mark_price, p.liquidation_price, side);
   }
+  renderBotSummary();
 }
 
 /* ============================================================
@@ -374,6 +385,7 @@ function setBotCache(list) {
   }
   renderBots(botCache);
   renderFleet();
+  renderBotSummary();
   updateSidebarDots();
 }
 function replaceBot(bot) {
@@ -382,7 +394,32 @@ function replaceBot(bot) {
   if (bot && bot.id) state.botStatuses[bot.id] = (bot.status || 'stopped').toLowerCase();
   renderBots(botCache);
   renderFleet();
+  renderBotSummary();
   updateSidebarDots();
+}
+
+/* ---- Overview: 3Commas-style summary strip ---- */
+function renderBotSummary() {
+  const bots = botCache || [];
+  const positions = state.allPositions || [];
+  const today = bots.reduce((s, b) => s + (isNum(b.pnl) ? b.pnl : 0), 0);
+  const upnl = positions.reduce((s, p) => s + (isNum(p.unrealized_pnl) ? p.unrealized_pnl : 0), 0);
+  const running = bots.filter((b) => (b.status || '').toLowerCase() === 'running').length;
+  const alloc = positions.reduce((s, p) => s + posNotional(p), 0);
+  const bal = state.account && isNum(state.account.balance) ? state.account.balance : null;
+
+  const t = $('#sumToday');
+  if (t) { t.className = `sum-value mono ${pnlClass(today)}`; setWithFlash(t, 'sumToday', fmtUSD(today, true), today); }
+  const u = $('#sumUpnl');
+  if (u) { u.className = `sum-value mono ${pnlClass(upnl)}`; setWithFlash(u, 'sumUpnl', fmtUSD(upnl, true), upnl); }
+  const a = $('#sumActive');
+  if (a && a.childNodes[0]) a.childNodes[0].nodeValue = `${running} / ${bots.length}`;
+  const dot = $('#sumActiveDot');
+  if (dot) dot.hidden = running === 0;
+  const al = $('#sumAlloc');
+  if (al) setWithFlash(al, 'sumAlloc', fmtUSD(alloc), alloc);
+  const als = $('#sumAllocSub');
+  if (als) als.textContent = bal ? `of ${fmtUSD(bal)}` : 'in bot trades';
 }
 
 /* ---- Overview fleet strip: one tile per bot (all 5 first-class) ---- */
@@ -464,25 +501,34 @@ function botCard(b) {
   const canOpen = BOT_IDS.includes(b.id);
   if (canOpen) card.classList.add('clickable');
 
+  // 3Commas card grammar: pair headline, strategy subline, pulsing status pill.
+  const searching = running && (b.activity || '').toLowerCase() === 'searching';
+  const pillCls = searching ? 'status-searching' : running ? 'status-running' : `status-${status}`;
+  const pillText = running && b.activity ? (FLEET_STATE_LABEL[b.activity] || status) : status;
+  // allocation micro-bar: this bot's share of allocated notional vs wallet balance.
+  const coins = (state.allPositions || []).filter((p) => (b.open_symbols || []).includes(p.symbol));
+  const alloc = coins.reduce((s, c) => s + posNotional(c), 0);
+  const bal = state.account && isNum(state.account.balance) ? state.account.balance : 0;
+  const allocPct = bal > 0 ? clamp((alloc / bal) * 100, 0, 100) : 0;
+
   card.innerHTML = `
     <div class="bot-top">
-      <div>
-        <div class="bot-id">${esc(b.id || '—')}</div>
+      <div class="bot-id-col">
+        <div class="bot-id">${esc(b.symbol || 'top30')}</div>
         <div class="bot-type">
-          <span class="tdot" style="background:${meta.color}"></span>${esc(meta.label)} · ${esc(b.symbol || 'top30')}
+          <span class="tdot" style="background:${meta.color}"></span>${esc(meta.label)} · ${esc(b.id || '—')}
         </div>
       </div>
       <div class="bot-status-col">
-        <span class="status-pill status-${status}">${status}</span>
-        ${running && b.activity ? `<span class="bot-activity">${esc(FLEET_STATE_LABEL[b.activity] || b.activity)}</span>` : ''}
+        <span class="status-pill ${pillCls} bot-pill-row"><span class="pulse-dot"></span>${esc(pillText)}</span>
       </div>
     </div>
     <div class="bot-meta">
-      <div><div class="m-label">PnL today</div><div class="m-val ${pnlClass(pnl)}">${fmtUSD(pnl, true)}</div></div>
-      <div><div class="m-label">Trades</div><div class="m-val">${isNum(b.trades_today) ? b.trades_today : 0}</div></div>
-      <div><div class="m-label">Leverage</div><div class="m-val">${isNum(b.leverage) ? b.leverage + '×' : '—'}</div></div>
+      <div><div class="m-label">Today</div><div class="m-val ${pnlClass(pnl)}">${fmtUSD(pnl, true)}</div></div>
+      <div><div class="m-label">Deals</div><div class="m-val">${isNum(b.trades_today) ? b.trades_today : 0}</div></div>
       <div><div class="m-label">Signal</div><div class="m-val bot-signal sig-${sig}">${esc(sig)}</div></div>
     </div>
+    <div class="bot-allocbar" aria-hidden="true" title="Allocated ${fmtUSD(alloc)}"><span class="bot-allocbar-fill" style="width:${allocPct.toFixed(1)}%"></span></div>
     <div class="bot-foot">
       <span class="m-label" style="font-size:10px;color:var(--text-3)">upd ${fmtTime(b.updated_at)}</span>
     </div>
@@ -954,6 +1000,16 @@ function renderStrategyState(ss, id) {
       state.botDetail.config.safety_order_count) || null;
     for (const dl of deals) {
       const markPrice = markOf(dl.symbol);
+      const pos = (state.allPositions || []).find((p) => p.symbol === dl.symbol);
+      const dir = (dl.side || 'LONG').toUpperCase() === 'SHORT' ? -1 : 1;
+      const upnlPct = pos && isNum(pos.mark_price) && isNum(dl.avg_entry) && dl.avg_entry
+        ? (pos.mark_price / dl.avg_entry - 1) * 100 * dir : null;
+      body.append(dealCard({
+        sym: dl.symbol, side: dl.side, entry: dl.avg_entry, cur: markPrice,
+        tp: dl.target_price, avg: dl.avg_entry,
+        soFilled: dl.safety_orders_filled, soMax: soCount || dl.safety_orders_filled || 0,
+        upnl: pos ? pos.unrealized_pnl : null, upnlPct,
+      }));
       const c = el('canvas', 'dca-be'); c.height = 46;
       body.append(c);
       drawDcaBreakeven(c, dl, markPrice, soCount || dl.safety_orders_filled, color);
@@ -1002,6 +1058,14 @@ function renderStrategyState(ss, id) {
       return;
     }
     sub.textContent = pos.symbol || '—';
+    const dir = (pos.side || 'LONG').toUpperCase() === 'SHORT' ? -1 : 1;
+    const upnlPct = isNum(pos.mark_price) && isNum(pos.entry_price) && pos.entry_price
+      ? (pos.mark_price / pos.entry_price - 1) * 100 * dir : null;
+    body.append(dealCard({
+      sym: pos.symbol, side: pos.side, entry: pos.entry_price, cur: pos.mark_price,
+      tp: pos.take_profit ?? pos.tp_price, avg: pos.entry_price, soMax: 0,
+      upnl: pos.unrealized_pnl, upnlPct,
+    }));
     const c = el('canvas', 'strat-canvas'); c.id = 'posLadderCanvas'; c.height = 120;
     body.append(c);
     drawPosLadder(c, pos, color);
@@ -1033,6 +1097,41 @@ function _rMultiple(pos) {
   if (risk <= 0) return null;
   const dir = (pos.side || 'LONG').toUpperCase() === 'SHORT' ? -1 : 1;
   return (dir * (mark - entry)) / risk;
+}
+
+/* 3Commas-style deal card: pair + uPnL header, progress-to-TP bar with an
+   amber avg-entry marker, and safety-order pips. All dynamic values are inline
+   styles / .up|.down toggles (purge-safe). Returns a detached element. */
+function dealCard({ sym, side, entry, cur, tp, avg, soFilled, soMax, upnl, upnlPct }) {
+  const span = isNum(tp) && isNum(entry) && tp !== entry ? tp - entry : null;
+  const pct = span && isNum(cur) ? clamp(((cur - entry) / (tp - entry)) * 100, 0, 100) : 0;
+  const avgPct = span && isNum(avg) ? clamp(((avg - entry) / (tp - entry)) * 100, 0, 100) : null;
+  const cls = isNum(upnl) && upnl < 0 ? 'is-loss' : isNum(upnl) && upnl > 0 ? 'is-profit' : '';
+  const wrap = el('article', `deal-card ${cls}`);
+  const pips = Array.from({ length: soMax || 0 }, (_, i) =>
+    `<span class="so-pip ${i < (soFilled || 0) ? 'filled' : ''}"></span>`).join('');
+  wrap.innerHTML = `
+    <div class="deal-head">
+      <div class="deal-id">
+        <span class="deal-sym">${esc(sym || '—')}</span>
+        ${side ? `<span class="pill pill-${(side || 'long').toLowerCase() === 'short' ? 'short' : 'long'}">${esc(side)}</span>` : ''}
+      </div>
+      <div class="deal-upnl">
+        <div class="deal-upnl-val mono ${pnlClass(upnl)}">${fmtUSD(upnl, true)}</div>
+        <div class="deal-upnl-pct mono ${pnlClass(upnlPct)}">${fmtPct(upnlPct, true)}</div>
+      </div>
+    </div>
+    <div class="tp-wrap">
+      <div class="tp-scale"><span>Entry ${fmtPrice(entry)}</span><span>Now ${fmtPrice(cur)}</span><span>TP ${fmtPrice(tp)}</span></div>
+      <div class="tp-track">
+        <span class="tp-fill" style="width:${pct.toFixed(1)}%"></span>
+        ${avgPct != null ? `<span class="tp-marker" style="left:${avgPct.toFixed(1)}%" title="Avg ${fmtPrice(avg)}"></span>` : ''}
+      </div>
+      <div class="tp-caption">${span ? pct.toFixed(0) + '% to take-profit' : 'no target set'}</div>
+    </div>
+    ${soMax ? `<div class="so-wrap"><div class="so-head"><span>Safety orders</span><span>${soFilled || 0} / ${soMax} used</span></div><div class="so-pips">${pips}</div></div>` : ''}
+  `;
+  return wrap;
 }
 function kv(label, value) {
   const c = el('div', 'pstat');

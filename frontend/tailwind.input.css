@@ -166,7 +166,7 @@
 .tdot { @apply inline-block h-2 w-2 rounded-full; }
 .bot-status-col { @apply flex flex-col items-end gap-1; }
 .bot-activity { @apply text-theme-xs text-gray-400; }
-.bot-meta { @apply mt-3 grid grid-cols-2 gap-2; }
+.bot-meta { @apply mt-3 grid grid-cols-3 gap-2; }
 .m-label  { @apply text-theme-xs text-gray-400; }
 .m-val    { @apply font-mono text-sm font-medium text-gray-700 dark:text-gray-200; }
 .bot-signal { @apply inline-block; }
@@ -289,6 +289,60 @@
 .ai-explain p { @apply mb-3; }
 .ai-explain strong { @apply font-semibold text-gray-800 dark:text-white/90; }
 .ai-points { @apply mb-3 ml-5 list-disc space-y-1; }
+
+/* ============================================================
+   3Commas-style additions
+   These are semantic component classes kept OUTSIDE @layer components
+   (like the block above) so they survive Tailwind's content purge.
+   All dynamic values are inline styles / .up|.down toggles — nothing
+   here relies on a runtime-generated utility class.
+   ============================================================ */
+
+/* ---- Overview: bots summary strip ---- */
+.summary-strip { @apply mb-5 grid grid-cols-2 gap-3 md:grid-cols-4; }
+.sum-tile   { @apply rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]; }
+.sum-label  { @apply text-theme-xs uppercase tracking-wide text-gray-400; }
+.sum-value  { @apply mt-1 font-mono text-2xl font-bold tabular-nums text-gray-800 dark:text-white/90; }
+.sum-value.up   { @apply text-success-600 dark:text-success-500; }
+.sum-value.down { @apply text-error-600 dark:text-error-500; }
+.sum-sub    { @apply mt-0.5 text-theme-xs text-gray-400; }
+.sum-dot    { @apply ml-1 inline-block h-1.5 w-1.5 rounded-full bg-success-500 align-middle; }
+
+/* ---- 3Commas bot card enrichments (extends .bot-card grammar) ---- */
+.bot-id-col    { @apply min-w-0; }
+.bot-pill-row  { @apply inline-flex items-center gap-1.5; }
+.pulse-dot     { @apply inline-block h-1.5 w-1.5 rounded-full bg-current; }
+.status-pill.status-running .pulse-dot,
+.status-pill.status-searching .pulse-dot { @apply animate-pulse; }
+.status-searching { @apply bg-brand-50 text-brand-500 dark:bg-brand-500/15 dark:text-brand-400; }
+.bot-allocbar  { @apply mt-3 block h-1 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800; }
+.bot-allocbar-fill { @apply block h-full rounded-full bg-brand-500/70 transition-[width] duration-500; }
+
+/* ---- deal / position card (per-bot strategy panel) ---- */
+.deal-card    { @apply rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]; }
+.deal-card.is-loss   { @apply border-l-2 border-l-error-500/60; }
+.deal-card.is-profit { @apply border-l-2 border-l-success-500/60; }
+.deal-head    { @apply flex items-start justify-between gap-3; }
+.deal-id      { @apply flex items-center gap-2; }
+.deal-sym     { @apply font-mono text-sm font-semibold text-gray-800 dark:text-white/90; }
+.deal-upnl    { @apply text-right; }
+.deal-upnl-val{ @apply font-mono text-lg font-bold tabular-nums; }
+.deal-upnl-pct{ @apply font-mono text-theme-xs tabular-nums; }
+
+/* progress-to-TP */
+.tp-wrap      { @apply mt-4; }
+.tp-scale     { @apply mb-1 flex justify-between text-theme-xs text-gray-400; }
+.tp-track     { @apply relative h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800; }
+.tp-fill      { @apply block h-full rounded-full bg-gradient-to-r from-brand-500 to-success-500 transition-[width] duration-500; }
+.tp-marker    { @apply absolute top-[-2px] h-3 w-0.5 bg-warning-500; }
+.tp-caption   { @apply mt-1 text-theme-xs text-gray-400; }
+
+/* safety-order pips */
+.so-wrap      { @apply mt-4; }
+.so-head      { @apply mb-1 flex justify-between text-theme-xs text-gray-400; }
+.so-pips      { @apply flex gap-1; }
+.so-pip       { @apply h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-gray-700; }
+.so-pip.filled{ @apply bg-warning-500; }
 
 /* ---- footer / modal ---- */
 .modal-overlay { @apply fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 p-4; }

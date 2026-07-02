@@ -158,6 +158,30 @@
             </article>
           </section>
 
+          <!-- Bots summary strip (3Commas-style) -->
+          <section id="botSummary" class="summary-strip" aria-label="Bots summary">
+            <div class="sum-tile">
+              <p class="sum-label">Today P/L</p>
+              <p class="sum-value mono" id="sumToday">$0.00</p>
+              <p class="sum-sub" id="sumTodaySub">across bots</p>
+            </div>
+            <div class="sum-tile">
+              <p class="sum-label">Unrealized</p>
+              <p class="sum-value mono" id="sumUpnl">$0.00</p>
+              <p class="sum-sub">open trades</p>
+            </div>
+            <div class="sum-tile">
+              <p class="sum-label">Active Bots</p>
+              <p class="sum-value mono" id="sumActive">0 / 0<span class="sum-dot" id="sumActiveDot" hidden></span></p>
+              <p class="sum-sub">running / total</p>
+            </div>
+            <div class="sum-tile">
+              <p class="sum-label">Allocated</p>
+              <p class="sum-value mono" id="sumAlloc">$0.00</p>
+              <p class="sum-sub" id="sumAllocSub">in bot trades</p>
+            </div>
+          </section>
+
           <!-- Fleet strip -->
           <section id="fleetStrip" class="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" aria-label="Bot fleet"></section>
 
