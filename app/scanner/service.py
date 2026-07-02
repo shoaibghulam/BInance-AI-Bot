@@ -36,7 +36,7 @@ from app.scanner.indicators import compute_indicators
 
 logger = logging.getLogger("trader.scanner")
 
-UNIVERSE_SIZE = 30
+UNIVERSE_SIZE = 40  # widen the tradeable shortlist (all perps ranked, top-N scanned)
 KLINE_LIMIT = 250  # enough warm-up for EMA200
 CACHE_TTL_S = 30.0  # refresh at most every 30s per strategy (keeps REST weight low)
 KLINE_CONCURRENCY = 5  # max simultaneous kline fetches per scan
@@ -94,6 +94,18 @@ class MarketScanner:
         """True if the cached scan is younger than CACHE_TTL_S."""
         cached = self._cache.get(strategy)
         return bool(cached and (time.monotonic() - cached[0]) < CACHE_TTL_S)
+
+    def has_cache(self, strategy: str) -> bool:
+        """True if any scan (even stale) exists for this strategy."""
+        return strategy in self._cache
+
+    def scan_state(self, strategy: str) -> str:
+        """'banned' | 'cold' | 'fresh' | 'stale' — backend scan truth."""
+        if self.is_banned:
+            return "banned"
+        if strategy not in self._cache:
+            return "cold"
+        return "fresh" if self.is_fresh(strategy) else "stale"
 
     @property
     def banned_until(self) -> float:

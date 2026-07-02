@@ -4,425 +4,490 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>The Trader — Futures Terminal</title>
+  <link rel="icon" href="/images/favicon.ico" />
+  <link rel="stylesheet" href="/dashboard.css" />
   <link rel="stylesheet" href="/style.css" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2316c784'/%3E%3Cpath d='M6 21l6-7 5 4 9-11' stroke='%23001b10' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <!-- Pre-paint theme (no FOUC). Trading terminal defaults to dark. -->
+  <script>
+    (function () {
+      try {
+        var d = JSON.parse(localStorage.getItem('darkMode'));
+        if (d === null) d = true; // default dark for the terminal
+        document.documentElement.classList.toggle('dark', !!d);
+      } catch (e) { document.documentElement.classList.add('dark'); }
+    })();
+  </script>
 </head>
-<body>
-  <!-- ============ TOP BAR (persists across tabs) ============ -->
-  <header class="topbar" role="banner">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="7" fill="#16c784"/><path d="M6 21l6-7 5 4 9-11" stroke="#001b10" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </span>
-      <div class="brand-text">
-        <span class="brand-name">The Trader</span>
-        <span class="brand-sub">USDⓈ-M Futures</span>
+<body class="font-outfit bg-gray-50 text-gray-800 dark:bg-gray-900 dark:text-white/90">
+  <div class="flex h-screen overflow-hidden">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside id="sidebar"
+      class="fixed inset-y-0 left-0 z-[99999] flex w-[290px] -translate-x-full flex-col overflow-y-auto border-r border-gray-200 bg-white px-5 py-6 transition-transform duration-300 lg:static lg:translate-x-0 dark:border-gray-800 dark:bg-black">
+      <div class="mb-6 flex items-center gap-3">
+        <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-500 text-white shadow-theme-sm" aria-hidden="true">
+          <svg viewBox="0 0 32 32" width="20" height="20"><path d="M6 21l6-7 5 4 9-11" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div class="leading-tight">
+          <div class="text-base font-bold text-gray-800 dark:text-white/90">The Trader</div>
+          <div class="text-theme-xs uppercase tracking-wider text-gray-400 dark:text-gray-500">USDⓈ-M Futures</div>
+        </div>
       </div>
-      <span id="envBadge" class="env-badge env-unknown" title="Trading environment">—</span>
+
+      <nav role="navigation" aria-label="Bot tabs" class="flex flex-col gap-1">
+        <button class="nav-item is-active" data-tab="overview" role="tab" aria-selected="true">
+          <span class="nav-icon" aria-hidden="true">▦</span>
+          <span class="nav-label">Overview</span>
+        </button>
+
+        <div class="px-3 pt-4 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Bots</div>
+        <button class="nav-item" data-tab="day-trading" data-bot="day-trading" role="tab" aria-selected="false">
+          <span class="nav-dot dot-stopped" data-bot-dot="day-trading" aria-hidden="true"></span>
+          <span class="nav-label">Day Trading</span>
+        </button>
+        <button class="nav-item" data-tab="scalping" data-bot="scalping" role="tab" aria-selected="false">
+          <span class="nav-dot dot-stopped" data-bot-dot="scalping" aria-hidden="true"></span>
+          <span class="nav-label">Scalping</span>
+        </button>
+        <button class="nav-item" data-tab="grid" data-bot="grid" role="tab" aria-selected="false">
+          <span class="nav-dot dot-stopped" data-bot-dot="grid" aria-hidden="true"></span>
+          <span class="nav-label">Grid</span>
+        </button>
+        <button class="nav-item" data-tab="dca" data-bot="dca" role="tab" aria-selected="false">
+          <span class="nav-dot dot-stopped" data-bot-dot="dca" aria-hidden="true"></span>
+          <span class="nav-label">DCA</span>
+        </button>
+        <button class="nav-item" data-tab="rebalancing" data-bot="rebalancing" role="tab" aria-selected="false">
+          <span class="nav-dot dot-stopped" data-bot-dot="rebalancing" aria-hidden="true"></span>
+          <span class="nav-label">Rebalancing</span>
+        </button>
+
+        <div class="px-3 pt-4 pb-1 text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">Intelligence</div>
+        <button class="nav-item" data-tab="ai-model" role="tab" aria-selected="false">
+          <span class="nav-icon" aria-hidden="true">◈</span>
+          <span class="nav-label">AI Model</span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- click-catcher overlay for the mobile off-canvas sidebar -->
+    <div id="sidebarOverlay" class="fixed inset-0 z-[9998] hidden bg-gray-900/50 lg:hidden"></div>
+
+    <!-- ============ CONTENT COLUMN ============ -->
+    <div class="flex flex-1 flex-col overflow-y-auto">
+
+      <!-- ---- Header ---- -->
+      <header class="sticky top-0 z-[99] flex w-full items-center gap-3 border-b border-gray-200 bg-white/90 px-4 py-3 backdrop-blur md:px-6 dark:border-gray-800 dark:bg-gray-900/90">
+        <button id="sidebarToggle" aria-label="Toggle sidebar"
+          class="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 lg:hidden dark:border-gray-700 dark:text-gray-400 dark:hover:bg-white/5">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+
+        <span id="envBadge" class="env-badge env-unknown" title="Trading environment">—</span>
+
+        <div class="ml-auto flex items-center gap-4 sm:gap-6">
+          <div class="flex flex-col items-end leading-tight">
+            <span class="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">Equity</span>
+            <span id="topEquity" class="mono text-lg font-bold text-gray-800 dark:text-white/90">$0.00</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span id="wsDot" class="dot dot-off" aria-hidden="true"></span>
+            <span id="wsLabel" class="hidden text-theme-xs text-gray-500 sm:inline dark:text-gray-400">Connecting…</span>
+          </div>
+
+          <button id="themeToggle" aria-label="Toggle dark mode"
+            class="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-white/5">
+            <svg class="hidden dark:block" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3v2M12 19v2M5 12H3m18 0h-2M6 6 4.5 4.5M18 6l1.5-1.5M6 18l-1.5 1.5M18 18l1.5 1.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.6"/></svg>
+            <svg class="block dark:hidden" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          </button>
+
+          <button id="killBtn"
+            class="inline-flex items-center gap-2 rounded-lg bg-error-500 px-3 py-2.5 text-theme-sm font-bold uppercase tracking-wide text-white shadow-theme-xs transition hover:bg-error-600 disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+            aria-label="Kill switch — flatten all positions and halt bots">
+            <span aria-hidden="true">⏻</span>
+            <span class="kill-text hidden sm:inline">KILL SWITCH</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- ---- Banners ---- -->
+      <div id="banners" class="flex flex-col gap-2 px-4 pt-4 md:px-6" aria-live="polite"></div>
+
+      <!-- ---- Main ---- -->
+      <main class="mx-auto w-full max-w-[1720px] flex-1 p-4 md:p-6">
+
+        <!-- ===================== OVERVIEW TAB ===================== -->
+        <section id="tab-overview" class="tab-panel is-active" role="tabpanel" aria-label="Overview">
+
+          <!-- Account cards -->
+          <section class="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6" aria-label="Account summary">
+            <article class="card" id="card-balance">
+              <div class="card-head"><span class="card-label">Balance</span></div>
+              <div class="card-value mono" data-field>$0.00</div>
+              <div class="card-foot">Wallet balance</div>
+            </article>
+            <article class="card" id="card-available">
+              <div class="card-head"><span class="card-label">Available</span></div>
+              <div class="card-value mono" data-field>$0.00</div>
+              <div class="card-foot">Free margin</div>
+            </article>
+            <article class="card" id="card-upnl">
+              <div class="card-head"><span class="card-label">Unrealized PnL</span></div>
+              <div class="card-value mono" data-field>$0.00</div>
+              <div class="card-foot" data-field-foot>—</div>
+            </article>
+            <article class="card" id="card-margin">
+              <div class="card-head"><span class="card-label">Margin Ratio</span></div>
+              <div class="card-value mono" data-field>0.0%</div>
+              <div class="meter" aria-hidden="true"><span class="meter-fill" id="marginFill"></span></div>
+              <div class="card-foot">Used / liquidation</div>
+            </article>
+            <article class="card" id="card-daily">
+              <div class="card-head"><span class="card-label">Daily PnL</span></div>
+              <div class="card-value mono" data-field>$0.00</div>
+              <div class="card-foot" data-field-foot>0.00%</div>
+            </article>
+            <article class="card col-span-2 sm:col-span-3 xl:col-span-1" id="card-equity">
+              <div class="card-head">
+                <span class="card-label">Equity Curve</span>
+                <span id="sparkDelta" class="spark-delta mono">—</span>
+              </div>
+              <canvas id="equityCanvas" class="spark-canvas" height="64"></canvas>
+              <div class="card-foot">Last 120 ticks</div>
+            </article>
+          </section>
+
+          <!-- Fleet strip -->
+          <section id="fleetStrip" class="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" aria-label="Bot fleet"></section>
+
+          <div class="grid grid-cols-1 gap-4 lg:grid-cols-2 md:gap-6">
+            <!-- Positions -->
+            <section class="panel lg:col-span-2" aria-label="Open positions">
+              <div class="panel-head">
+                <h2>Positions <span id="posCount" class="badge-count">0</span></h2>
+              </div>
+              <div class="p-4">
+                <div class="table-wrap">
+                  <table class="data-table" id="positionsTable">
+                    <thead>
+                      <tr>
+                        <th>Symbol</th><th>Side</th><th class="num">Size</th>
+                        <th class="num">Entry</th><th class="num">Mark</th>
+                        <th class="num">Liq.</th><th class="num">Lev</th>
+                        <th class="num">uPnL</th>
+                      </tr>
+                    </thead>
+                    <tbody id="positionsBody"></tbody>
+                  </table>
+                  <div id="positionsEmpty" class="empty-state">No open positions.</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Config / risk rails -->
+            <section class="panel" aria-label="Risk configuration">
+              <div class="panel-head">
+                <h2>Risk Rails</h2>
+                <span class="panel-sub">Safety limits</span>
+              </div>
+              <div id="configBody" class="config-grid">
+                <div class="config-skeleton">Loading config…</div>
+              </div>
+            </section>
+
+            <!-- Bots summary grid -->
+            <section class="panel" aria-label="Trading bots">
+              <div class="panel-head">
+                <h2>Bots <span id="botCount" class="badge-count">0</span></h2>
+                <div class="bots-actions">
+                  <button class="btn-primary" id="startAllBtn">Start all</button>
+                  <button class="btn" id="stopAllBtn">Stop all</button>
+                </div>
+              </div>
+              <div id="botsBody" class="bots-grid">
+                <div class="empty-state">Loading bots…</div>
+              </div>
+            </section>
+
+            <!-- Log console -->
+            <section class="panel lg:col-span-2" aria-label="Live event log">
+              <div class="panel-head">
+                <h2>Live Log</h2>
+                <div class="log-tools">
+                  <label class="autoscroll">
+                    <input type="checkbox" id="autoScroll" checked /> Auto-scroll
+                  </label>
+                  <button id="clearLog" class="btn-ghost" aria-label="Clear log">Clear</button>
+                </div>
+              </div>
+              <div id="logBody" class="log-body" role="log" aria-live="polite"></div>
+            </section>
+          </div>
+        </section>
+
+        <!-- ===================== BOT DETAIL TAB ===================== -->
+        <section id="tab-bot" class="tab-panel" role="tabpanel" aria-label="Bot detail" hidden>
+
+          <!-- Panel 1: Header + controls -->
+          <section class="panel mb-4 p-4 md:p-5" aria-label="Bot controls">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <span class="bd-dot dot-stopped" id="bdStatusDot" aria-hidden="true"></span>
+                <h2 id="bdName" class="text-xl font-bold text-gray-800 dark:text-white/90">Bot</h2>
+                <span class="status-pill status-stopped" id="bdStatusPill">stopped</span>
+              </div>
+              <div>
+                <button class="bot-toggle to-start" id="bdToggle">Start</button>
+              </div>
+            </div>
+            <p class="bd-desc" id="bdDesc">—</p>
+
+            <!-- Live status strip -->
+            <div class="bd-strip" id="bdStrip" data-state="stopped" aria-live="polite">
+              <div class="strip-state">
+                <span class="strip-pulse" aria-hidden="true"></span>
+                <span class="strip-label" id="bdStripLabel">Stopped</span>
+              </div>
+              <div class="strip-coins" id="bdStripCoins"></div>
+              <div class="strip-pnl">
+                <span class="strip-pnl-label">Live P/L</span>
+                <span class="strip-pnl-val mono" id="bdStripPnl">—</span>
+                <canvas id="bdStripSpark" class="strip-spark" height="34"></canvas>
+              </div>
+            </div>
+
+            <div class="bd-indicators" id="bdIndicators" aria-label="Indicators used"></div>
+
+            <form class="bd-config" id="bdConfigForm" aria-label="Bot configuration">
+              <div class="cfg-field">
+                <label for="cfgTimeframe">Timeframe</label>
+                <select id="cfgTimeframe" name="timeframe">
+                  <option value="1m">1m</option><option value="3m">3m</option>
+                  <option value="5m">5m</option><option value="15m">15m</option>
+                  <option value="30m">30m</option><option value="1h">1h</option>
+                  <option value="4h">4h</option>
+                </select>
+              </div>
+              <div class="cfg-field">
+                <label for="cfgStopLoss">Stop loss (ATR×)</label>
+                <input type="number" id="cfgStopLoss" name="stop_loss_atr" step="0.1" min="0" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgTakeProfit">Take profit (R)</label>
+                <input type="number" id="cfgTakeProfit" name="take_profit_r" step="0.1" min="0" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgLeverage">Leverage</label>
+                <input type="number" id="cfgLeverage" name="leverage" step="1" min="1" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgMinWinProb">Min win prob</label>
+                <input type="number" id="cfgMinWinProb" name="min_win_prob" step="0.01" min="0" max="1" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgInvest">Investment (USDT)</label>
+                <input type="number" id="cfgInvest" name="investment_usdt" step="1" min="0" placeholder="0 = auto (risk %)" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgSlPct">Stop loss (%)</label>
+                <input type="number" id="cfgSlPct" name="stop_loss_pct" step="0.1" min="0" max="50" placeholder="0 = ATR" />
+              </div>
+              <div class="cfg-field">
+                <label for="cfgTpPct">Take profit (%)</label>
+                <input type="number" id="cfgTpPct" name="take_profit_pct" step="0.1" min="0" max="100" placeholder="0 = R×SL" />
+              </div>
+              <div class="cfg-field cfg-submit">
+                <button type="submit" class="btn-primary" id="bdConfigSave">Save config</button>
+                <span class="cfg-status" id="bdConfigStatus" aria-live="polite"></span>
+              </div>
+            </form>
+          </section>
+
+          <div class="grid grid-cols-1 gap-4 xl:grid-cols-2 md:gap-6">
+            <!-- Panel 2: Performance -->
+            <section class="panel" aria-label="Performance">
+              <div class="panel-head"><h2>Performance</h2><span class="panel-sub" id="perfUpdated">—</span></div>
+              <div class="bd-body">
+                <div class="perf-stats" id="perfStats"></div>
+                <div class="perf-winrate">
+                  <div class="pw-head"><span>Win rate</span><span class="mono" id="perfWinRateVal">—</span></div>
+                  <div class="winbar"><span class="winbar-fill" id="perfWinBar"></span></div>
+                  <div class="pw-sub"><span class="up" id="perfWins">0 W</span> · <span class="down" id="perfLosses">0 L</span></div>
+                </div>
+                <div class="curve-wrap">
+                  <div class="curve-label">Equity curve</div>
+                  <canvas id="botEquityCanvas" class="bot-curve" height="120"></canvas>
+                  <div class="empty-state" id="botEquityEmpty" hidden>No equity history yet.</div>
+                </div>
+                <div class="table-wrap">
+                  <div class="curve-label">Recent trades</div>
+                  <table class="data-table compact" id="tradesTable">
+                    <thead><tr>
+                      <th>Symbol</th><th>Side</th><th class="num">Entry</th><th class="num">Exit</th>
+                      <th class="num">PnL</th><th>Outcome</th><th class="num">Win prob</th>
+                    </tr></thead>
+                    <tbody id="tradesBody"></tbody>
+                  </table>
+                  <div id="tradesEmpty" class="empty-state">No trades yet.</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Panel 2b: Strategy state -->
+            <section class="panel" id="bdStrategyPanel" aria-label="Strategy state" hidden>
+              <div class="panel-head"><h2 id="bdStrategyTitle">Strategy</h2><span class="panel-sub" id="bdStrategySub">—</span></div>
+              <div class="bd-body" id="bdStrategyBody"></div>
+            </section>
+
+            <!-- Panel 3: Scanner results -->
+            <section class="panel" aria-label="Scanner results">
+              <div class="panel-head"><h2>Scanner <span class="badge-count" id="scanCount">0</span></h2><span class="panel-sub" id="scanUpdated">—</span></div>
+              <div class="bd-body">
+                <div class="table-wrap">
+                  <table class="data-table compact" id="scanTable">
+                    <thead><tr>
+                      <th class="num">#</th><th>Symbol</th><th class="num">Score</th>
+                      <th>Filters</th><th class="num">Win prob</th><th class="num">Price</th>
+                      <th class="num">24h Vol</th><th class="num">%Chg</th>
+                    </tr></thead>
+                    <tbody id="scanBody"></tbody>
+                  </table>
+                  <div id="scanEmpty" class="empty-state">Scanning market…</div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Panel 4: Live indicators -->
+            <section class="panel" aria-label="Live indicators">
+              <div class="panel-head"><h2>Live Indicators</h2><span class="panel-sub" id="indUpdated">—</span></div>
+              <div class="bd-body">
+                <div class="ind-list" id="indList"></div>
+                <div id="indEmpty" class="empty-state">Waiting for indicator data…</div>
+              </div>
+            </section>
+
+            <!-- Panel 5: AI insight -->
+            <section class="panel" aria-label="AI model insight">
+              <div class="panel-head">
+                <h2>AI Insight</h2>
+                <button class="btn-ghost" id="mlRetrain">Retrain</button>
+              </div>
+              <div class="bd-body">
+                <div class="ai-top">
+                  <span class="ml-badge ml-warming" id="mlBadge">—</span>
+                  <span class="ml-backend mono" id="mlBackend">—</span>
+                </div>
+                <div class="ai-note" id="mlNote" hidden></div>
+                <div class="ai-stats" id="mlStats"></div>
+                <div class="curve-wrap">
+                  <div class="curve-label">Accuracy over time</div>
+                  <canvas id="mlAccCanvas" class="bot-curve" height="90"></canvas>
+                  <div class="empty-state" id="mlAccEmpty" hidden>No accuracy history.</div>
+                </div>
+                <div class="curve-wrap">
+                  <div class="curve-label">Feature importance</div>
+                  <canvas id="mlFeatCanvas" class="bot-curve" height="140"></canvas>
+                  <div class="empty-state" id="mlFeatEmpty" hidden>No feature importance.</div>
+                </div>
+                <div class="curve-label">Live win-prob per setup</div>
+                <div class="ml-preds" id="mlPreds"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <!-- ===================== AI MODEL TAB ===================== -->
+        <section id="tab-ai-model" class="tab-panel" role="tabpanel" aria-label="AI Model" hidden>
+          <div class="ai-head">
+            <div>
+              <h1 class="ai-title">Self-Learning Model</h1>
+              <p class="ai-sub" id="aiApproach">Loading…</p>
+            </div>
+            <div class="ai-actions">
+              <label class="ai-lookback">Train on history
+                <select id="aiLookback">
+                  <option value="30">30 days</option>
+                  <option value="90" selected>3 months</option>
+                  <option value="120">4 months</option>
+                  <option value="180">6 months</option>
+                </select>
+              </label>
+              <button class="btn-primary" id="aiBackfill">Train on historical data</button>
+              <button class="btn" id="aiTrainAll">Train on live trades</button>
+            </div>
+          </div>
+
+          <!-- Backfill progress -->
+          <section class="panel mb-4" id="aiBackfillPanel" hidden>
+            <div class="panel-head"><h2>Historical training</h2><span class="panel-sub" id="aiBfStatus">—</span></div>
+            <div class="bd-body">
+              <div class="bf-bar"><span class="bf-fill" id="aiBfFill"></span></div>
+              <div class="bf-meta" id="aiBfMeta">—</div>
+            </div>
+          </section>
+
+          <!-- Headline stat cards -->
+          <section class="mb-4 grid grid-cols-2 gap-4 xl:grid-cols-4" aria-label="Model summary">
+            <div class="card"><div class="card-label">Model</div><div class="card-value sm" id="aiModelType">—</div><div class="card-foot" id="aiBackend">—</div></div>
+            <div class="card"><div class="card-label">Parameters</div><div class="card-value" id="aiParams">—</div><div class="card-foot">effective (tree leaves / weights)</div></div>
+            <div class="card"><div class="card-label">Training data</div><div class="card-value" id="aiSamples">—</div><div class="card-foot">closed trades learned from</div></div>
+            <div class="card"><div class="card-label">Avg accuracy</div><div class="card-value" id="aiAccuracy">—</div><div class="card-foot" id="aiTrainedCount">—</div></div>
+          </section>
+
+          <div class="ai-grid">
+            <!-- Per-bot model table -->
+            <section class="panel">
+              <div class="panel-head"><h2>Per-bot models</h2><span class="panel-sub" id="aiUpdated">—</span></div>
+              <div class="bd-body">
+                <div class="table-wrap">
+                  <table class="data-table compact" id="aiModelTable">
+                    <thead><tr>
+                      <th>Bot</th><th>Status</th><th class="num">Train data</th><th class="num">Params</th>
+                      <th class="num">Accuracy</th><th class="num">AUC</th><th class="num">Brier</th>
+                      <th class="num">Train time</th><th>Calibrated</th>
+                    </tr></thead>
+                    <tbody id="aiModelBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <!-- Accuracy over time -->
+            <section class="panel">
+              <div class="panel-head"><h2>Accuracy over time</h2><span class="panel-sub" id="aiAccBot">—</span></div>
+              <div class="bd-body">
+                <canvas id="aiAccCanvas" class="bot-curve" height="120"></canvas>
+                <div id="aiAccLegend" class="ai-legend"></div>
+                <div class="empty-state" id="aiAccEmpty" hidden>No accuracy history yet — train the model to record points.</div>
+              </div>
+            </section>
+          </div>
+
+          <div class="ai-grid">
+            <!-- How it learns -->
+            <section class="panel">
+              <div class="panel-head"><h2>How it learns</h2></div>
+              <div class="bd-body ai-explain" id="aiExplain"></div>
+            </section>
+          </div>
+        </section>
+
+      </main>
+
+      <footer class="mx-auto flex w-full max-w-[1720px] items-center justify-between border-t border-gray-200 px-4 py-4 text-theme-xs text-gray-400 md:px-6 dark:border-gray-800 dark:text-gray-500">
+        <span>The Trader · testnet-first trading terminal</span>
+        <span id="serverTime" class="mono">—</span>
+      </footer>
     </div>
-
-    <div class="topbar-stats">
-      <div class="ts-equity">
-        <span class="ts-label">Equity</span>
-        <span id="topEquity" class="ts-value mono">$0.00</span>
-      </div>
-      <div class="conn">
-        <span id="wsDot" class="dot dot-off" aria-hidden="true"></span>
-        <span id="wsLabel" class="conn-label">Connecting…</span>
-      </div>
-    </div>
-
-    <div class="topbar-actions">
-      <button id="killBtn" class="kill-btn" aria-label="Kill switch — flatten all positions and halt bots">
-        <span class="kill-icon" aria-hidden="true">⏻</span>
-        <span class="kill-text">KILL SWITCH</span>
-      </button>
-    </div>
-  </header>
-
-  <!-- ============ BANNERS ============ -->
-  <div id="banners" class="banners" aria-live="polite"></div>
-
-  <!-- ============ SHELL: sidebar nav + tab content ============ -->
-  <div class="shell">
-    <!-- Left sidebar navigation -->
-    <nav class="sidebar" role="navigation" aria-label="Bot tabs">
-      <button class="nav-item is-active" data-tab="overview" role="tab" aria-selected="true">
-        <span class="nav-icon" aria-hidden="true">▦</span>
-        <span class="nav-label">Overview</span>
-      </button>
-      <div class="nav-sep">Bots</div>
-      <button class="nav-item" data-tab="day-trading" data-bot="day-trading" role="tab" aria-selected="false">
-        <span class="nav-dot dot-stopped" data-bot-dot="day-trading" aria-hidden="true"></span>
-        <span class="nav-label">Day Trading</span>
-      </button>
-      <button class="nav-item" data-tab="scalping" data-bot="scalping" role="tab" aria-selected="false">
-        <span class="nav-dot dot-stopped" data-bot-dot="scalping" aria-hidden="true"></span>
-        <span class="nav-label">Scalping</span>
-      </button>
-      <button class="nav-item" data-tab="grid" data-bot="grid" role="tab" aria-selected="false">
-        <span class="nav-dot dot-stopped" data-bot-dot="grid" aria-hidden="true"></span>
-        <span class="nav-label">Grid</span>
-      </button>
-      <button class="nav-item" data-tab="dca" data-bot="dca" role="tab" aria-selected="false">
-        <span class="nav-dot dot-stopped" data-bot-dot="dca" aria-hidden="true"></span>
-        <span class="nav-label">DCA</span>
-      </button>
-      <button class="nav-item" data-tab="rebalancing" data-bot="rebalancing" role="tab" aria-selected="false">
-        <span class="nav-dot dot-stopped" data-bot-dot="rebalancing" aria-hidden="true"></span>
-        <span class="nav-label">Rebalancing</span>
-      </button>
-      <div class="nav-sep">Intelligence</div>
-      <button class="nav-item" data-tab="ai-model" role="tab" aria-selected="false">
-        <span class="nav-icon" aria-hidden="true">◈</span>
-        <span class="nav-label">AI Model</span>
-      </button>
-    </nav>
-
-    <!-- ============ MAIN CONTENT ============ -->
-    <main class="content">
-
-      <!-- ===================== OVERVIEW TAB ===================== -->
-      <section class="tab-panel is-active" id="tab-overview" role="tabpanel" aria-label="Overview">
-        <!-- Account cards -->
-        <section class="cards" aria-label="Account summary">
-          <article class="card" id="card-balance">
-            <div class="card-head"><span class="card-label">Balance</span></div>
-            <div class="card-value mono" data-field>$0.00</div>
-            <div class="card-foot">Wallet balance</div>
-          </article>
-
-          <article class="card" id="card-available">
-            <div class="card-head"><span class="card-label">Available</span></div>
-            <div class="card-value mono" data-field>$0.00</div>
-            <div class="card-foot">Free margin</div>
-          </article>
-
-          <article class="card" id="card-upnl">
-            <div class="card-head"><span class="card-label">Unrealized PnL</span></div>
-            <div class="card-value mono" data-field>$0.00</div>
-            <div class="card-foot" data-field-foot>—</div>
-          </article>
-
-          <article class="card" id="card-margin">
-            <div class="card-head"><span class="card-label">Margin Ratio</span></div>
-            <div class="card-value mono" data-field>0.0%</div>
-            <div class="meter" aria-hidden="true"><span class="meter-fill" id="marginFill"></span></div>
-            <div class="card-foot">Used / liquidation</div>
-          </article>
-
-          <article class="card" id="card-daily">
-            <div class="card-head"><span class="card-label">Daily PnL</span></div>
-            <div class="card-value mono" data-field>$0.00</div>
-            <div class="card-foot" data-field-foot>0.00%</div>
-          </article>
-
-          <article class="card card-spark" id="card-equity">
-            <div class="card-head">
-              <span class="card-label">Equity Curve</span>
-              <span id="sparkDelta" class="spark-delta mono">—</span>
-            </div>
-            <canvas id="equityCanvas" class="spark-canvas" height="64"></canvas>
-            <div class="card-foot">Last 120 ticks</div>
-          </article>
-        </section>
-
-        <div class="grid">
-          <!-- Positions -->
-          <section class="panel panel-positions" aria-label="Open positions">
-            <div class="panel-head">
-              <h2>Positions <span id="posCount" class="badge-count">0</span></h2>
-            </div>
-            <div class="table-wrap">
-              <table class="data-table" id="positionsTable">
-                <thead>
-                  <tr>
-                    <th>Symbol</th><th>Side</th><th class="num">Size</th>
-                    <th class="num">Entry</th><th class="num">Mark</th>
-                    <th class="num">Liq.</th><th class="num">Lev</th>
-                    <th class="num">uPnL</th>
-                  </tr>
-                </thead>
-                <tbody id="positionsBody"></tbody>
-              </table>
-              <div id="positionsEmpty" class="empty-state">No open positions.</div>
-            </div>
-          </section>
-
-          <!-- Config / risk rails -->
-          <section class="panel panel-config" aria-label="Risk configuration">
-            <div class="panel-head">
-              <h2>Risk Rails</h2>
-              <span class="panel-sub">Safety limits</span>
-            </div>
-            <div id="configBody" class="config-grid">
-              <div class="config-skeleton">Loading config…</div>
-            </div>
-          </section>
-
-          <!-- Bots summary grid -->
-          <section class="panel panel-bots" aria-label="Trading bots">
-            <div class="panel-head">
-              <h2>Bots <span id="botCount" class="badge-count">0</span></h2>
-              <span class="panel-sub">5 strategy types</span>
-            </div>
-            <div id="botsBody" class="bots-grid">
-              <div class="bots-skeleton">
-                <div class="skel"></div><div class="skel"></div><div class="skel"></div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Log console -->
-          <section class="panel panel-log" aria-label="Live event log">
-            <div class="panel-head">
-              <h2>Live Log</h2>
-              <div class="log-tools">
-                <label class="autoscroll">
-                  <input type="checkbox" id="autoScroll" checked /> Auto-scroll
-                </label>
-                <button id="clearLog" class="btn-ghost" aria-label="Clear log">Clear</button>
-              </div>
-            </div>
-            <div id="logBody" class="log-body" role="log" aria-live="polite"></div>
-          </section>
-        </div>
-      </section>
-
-      <!-- ===================== BOT DETAIL TAB ===================== -->
-      <!-- One reusable panel; content swapped per active bot in JS -->
-      <section class="tab-panel" id="tab-bot" role="tabpanel" aria-label="Bot detail" hidden>
-
-        <!-- Panel 1: Header + controls -->
-        <section class="panel bot-detail-head" aria-label="Bot controls">
-          <div class="bd-head-top">
-            <div class="bd-title">
-              <span class="bd-dot dot-stopped" id="bdStatusDot" aria-hidden="true"></span>
-              <h2 id="bdName">Bot</h2>
-              <span class="status-pill status-stopped" id="bdStatusPill">stopped</span>
-            </div>
-            <div class="bd-actions">
-              <button class="bot-toggle to-start" id="bdToggle">Start</button>
-            </div>
-          </div>
-          <p class="bd-desc" id="bdDesc">—</p>
-          <div class="bd-indicators" id="bdIndicators" aria-label="Indicators used"></div>
-
-          <form class="bd-config" id="bdConfigForm" aria-label="Bot configuration">
-            <div class="cfg-field">
-              <label for="cfgTimeframe">Timeframe</label>
-              <select id="cfgTimeframe" name="timeframe">
-                <option value="1m">1m</option><option value="3m">3m</option>
-                <option value="5m">5m</option><option value="15m">15m</option>
-                <option value="30m">30m</option><option value="1h">1h</option>
-                <option value="4h">4h</option>
-              </select>
-            </div>
-            <div class="cfg-field">
-              <label for="cfgStopLoss">Stop loss (ATR×)</label>
-              <input type="number" id="cfgStopLoss" name="stop_loss_atr" step="0.1" min="0" />
-            </div>
-            <div class="cfg-field">
-              <label for="cfgTakeProfit">Take profit (R)</label>
-              <input type="number" id="cfgTakeProfit" name="take_profit_r" step="0.1" min="0" />
-            </div>
-            <div class="cfg-field">
-              <label for="cfgLeverage">Leverage</label>
-              <input type="number" id="cfgLeverage" name="leverage" step="1" min="1" />
-            </div>
-            <div class="cfg-field">
-              <label for="cfgMinWinProb">Min win prob</label>
-              <input type="number" id="cfgMinWinProb" name="min_win_prob" step="0.01" min="0" max="1" />
-            </div>
-            <div class="cfg-field cfg-submit">
-              <button type="submit" class="btn-primary" id="bdConfigSave">Save config</button>
-              <span class="cfg-status" id="bdConfigStatus" aria-live="polite"></span>
-            </div>
-          </form>
-        </section>
-
-        <div class="bot-grid">
-          <!-- Panel 2: Performance -->
-          <section class="panel" aria-label="Performance">
-            <div class="panel-head"><h2>Performance</h2><span class="panel-sub" id="perfUpdated">—</span></div>
-            <div class="bd-body">
-              <div class="perf-stats" id="perfStats"></div>
-              <div class="perf-winrate">
-                <div class="pw-head"><span>Win rate</span><span class="mono" id="perfWinRateVal">—</span></div>
-                <div class="winbar"><span class="winbar-fill" id="perfWinBar"></span></div>
-                <div class="pw-sub"><span class="up" id="perfWins">0 W</span> · <span class="down" id="perfLosses">0 L</span></div>
-              </div>
-              <div class="curve-wrap">
-                <div class="curve-label">Equity curve</div>
-                <canvas id="botEquityCanvas" class="bot-curve" height="120"></canvas>
-                <div class="empty-state" id="botEquityEmpty" hidden>No equity history yet.</div>
-              </div>
-              <div class="table-wrap">
-                <div class="curve-label">Recent trades</div>
-                <table class="data-table compact" id="tradesTable">
-                  <thead><tr>
-                    <th>Symbol</th><th>Side</th><th class="num">Entry</th><th class="num">Exit</th>
-                    <th class="num">PnL</th><th>Outcome</th><th class="num">Win prob</th>
-                  </tr></thead>
-                  <tbody id="tradesBody"></tbody>
-                </table>
-                <div id="tradesEmpty" class="empty-state">No trades yet.</div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Panel 2b: Strategy state (grid / DCA / rebalancing only) -->
-          <section class="panel" id="bdStrategyPanel" aria-label="Strategy state" hidden>
-            <div class="panel-head"><h2 id="bdStrategyTitle">Strategy</h2><span class="panel-sub" id="bdStrategySub">—</span></div>
-            <div class="bd-body" id="bdStrategyBody"></div>
-          </section>
-
-          <!-- Panel 3: Scanner results -->
-          <section class="panel" aria-label="Scanner results">
-            <div class="panel-head"><h2>Scanner <span class="badge-count" id="scanCount">0</span></h2><span class="panel-sub" id="scanUpdated">—</span></div>
-            <div class="bd-body">
-              <div class="table-wrap">
-                <table class="data-table compact" id="scanTable">
-                  <thead><tr>
-                    <th class="num">#</th><th>Symbol</th><th class="num">Score</th>
-                    <th>Filters</th><th class="num">Win prob</th><th class="num">Price</th>
-                    <th class="num">24h Vol</th><th class="num">%Chg</th>
-                  </tr></thead>
-                  <tbody id="scanBody"></tbody>
-                </table>
-                <div id="scanEmpty" class="empty-state">Scanning market…</div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Panel 4: Live indicators -->
-          <section class="panel" aria-label="Live indicators">
-            <div class="panel-head"><h2>Live Indicators</h2><span class="panel-sub" id="indUpdated">—</span></div>
-            <div class="bd-body">
-              <div class="ind-list" id="indList"></div>
-              <div id="indEmpty" class="empty-state">Waiting for indicator data…</div>
-            </div>
-          </section>
-
-          <!-- Panel 5: AI insight -->
-          <section class="panel panel-ai" aria-label="AI model insight">
-            <div class="panel-head">
-              <h2>AI Insight</h2>
-              <button class="btn-ghost" id="mlRetrain">Retrain</button>
-            </div>
-            <div class="bd-body">
-              <div class="ai-top">
-                <span class="ml-badge ml-warming" id="mlBadge">—</span>
-                <span class="ml-backend mono" id="mlBackend">—</span>
-              </div>
-              <div class="ai-note" id="mlNote" hidden></div>
-              <div class="ai-stats" id="mlStats"></div>
-              <div class="curve-wrap">
-                <div class="curve-label">Accuracy over time</div>
-                <canvas id="mlAccCanvas" class="bot-curve" height="90"></canvas>
-                <div class="empty-state" id="mlAccEmpty" hidden>No accuracy history.</div>
-              </div>
-              <div class="curve-wrap">
-                <div class="curve-label">Feature importance</div>
-                <canvas id="mlFeatCanvas" class="bot-curve" height="140"></canvas>
-                <div class="empty-state" id="mlFeatEmpty" hidden>No feature importance.</div>
-              </div>
-              <div class="curve-label">Live win-prob per setup</div>
-              <div class="ml-preds" id="mlPreds"></div>
-            </div>
-          </section>
-        </div>
-      </section>
-
-      <!-- ===================== AI MODEL TAB ===================== -->
-      <section class="tab-panel" id="tab-ai-model" role="tabpanel" aria-label="AI Model" hidden>
-        <div class="ai-head">
-          <div>
-            <h1 class="ai-title">Self-Learning Model</h1>
-            <p class="ai-sub" id="aiApproach">Loading…</p>
-          </div>
-          <div class="ai-actions">
-            <label class="ai-lookback">Train on history
-              <select id="aiLookback">
-                <option value="30">30 days</option>
-                <option value="90" selected>3 months</option>
-                <option value="120">4 months</option>
-                <option value="180">6 months</option>
-              </select>
-            </label>
-            <button class="btn btn-primary" id="aiBackfill">Train on historical data</button>
-            <button class="btn" id="aiTrainAll">Train on live trades</button>
-          </div>
-        </div>
-
-        <!-- Backfill progress (hidden until a run starts) -->
-        <section class="panel" id="aiBackfillPanel" hidden>
-          <div class="panel-head"><h2>Historical training</h2><span class="panel-sub" id="aiBfStatus">—</span></div>
-          <div class="bd-body">
-            <div class="bf-bar"><span class="bf-fill" id="aiBfFill"></span></div>
-            <div class="bf-meta" id="aiBfMeta">—</div>
-          </div>
-        </section>
-
-        <!-- Headline stat cards -->
-        <section class="cards" aria-label="Model summary">
-          <div class="card"><div class="card-label">Model</div><div class="card-value sm" id="aiModelType">—</div><div class="card-foot" id="aiBackend">—</div></div>
-          <div class="card"><div class="card-label">Parameters</div><div class="card-value" id="aiParams">—</div><div class="card-foot">effective (tree leaves / weights)</div></div>
-          <div class="card"><div class="card-label">Training data</div><div class="card-value" id="aiSamples">—</div><div class="card-foot">closed trades learned from</div></div>
-          <div class="card"><div class="card-label">Avg accuracy</div><div class="card-value" id="aiAccuracy">—</div><div class="card-foot" id="aiTrainedCount">—</div></div>
-        </section>
-
-        <div class="ai-grid">
-          <!-- Per-bot model table -->
-          <section class="panel">
-            <div class="panel-head"><h2>Per-bot models</h2><span class="panel-sub" id="aiUpdated">—</span></div>
-            <div class="bd-body">
-              <div class="table-wrap">
-                <table class="data-table compact" id="aiModelTable">
-                  <thead><tr>
-                    <th>Bot</th><th>Status</th><th class="num">Train data</th><th class="num">Params</th>
-                    <th class="num">Accuracy</th><th class="num">AUC</th><th class="num">Brier</th>
-                    <th class="num">Train time</th><th>Calibrated</th>
-                  </tr></thead>
-                  <tbody id="aiModelBody"></tbody>
-                </table>
-              </div>
-            </div>
-          </section>
-
-          <!-- Accuracy over time -->
-          <section class="panel">
-            <div class="panel-head"><h2>Accuracy over time</h2><span class="panel-sub" id="aiAccBot">—</span></div>
-            <div class="bd-body">
-              <canvas id="aiAccCanvas" class="bot-curve" height="120"></canvas>
-              <div class="empty-state" id="aiAccEmpty" hidden>No accuracy history yet — train the model to record points.</div>
-            </div>
-          </section>
-        </div>
-
-        <div class="ai-grid">
-          <!-- How it learns -->
-          <section class="panel">
-            <div class="panel-head"><h2>How it learns</h2></div>
-            <div class="bd-body ai-explain" id="aiExplain"></div>
-          </section>
-        </div>
-      </section>
-
-    </main>
   </div>
 
-  <footer class="footer">
-    <span>The Trader · testnet-first trading terminal</span>
-    <span id="serverTime" class="mono">—</span>
-  </footer>
-
   <!-- ============ KILL CONFIRM MODAL ============ -->
-  <div id="killModal" class="modal-overlay" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="killModalTitle">
-      <h3 id="killModalTitle">Activate Kill Switch?</h3>
-      <p>This will <strong>cancel all open orders</strong>, <strong>flatten every position</strong> via reduceOnly, and <strong>halt all bots</strong>. This cannot be undone automatically.</p>
-      <div class="modal-actions">
+  <div id="killModal" class="fixed inset-0 z-[100000] flex items-center justify-center bg-gray-900/70 p-5 backdrop-blur-sm" hidden>
+    <div class="w-full max-w-md rounded-2xl border-t-4 border-error-500 bg-white p-6 shadow-theme-xl dark:bg-gray-dark" role="dialog" aria-modal="true" aria-labelledby="killModalTitle">
+      <h3 id="killModalTitle" class="mb-2.5 text-lg font-bold text-error-600 dark:text-error-400">Activate Kill Switch?</h3>
+      <p class="mb-5 text-theme-sm leading-relaxed text-gray-500 dark:text-gray-400">This will <strong class="font-semibold text-gray-800 dark:text-white/90">cancel all open orders</strong>, <strong class="font-semibold text-gray-800 dark:text-white/90">flatten every position</strong> via reduceOnly, and <strong class="font-semibold text-gray-800 dark:text-white/90">halt all bots</strong>. This cannot be undone automatically.</p>
+      <div class="flex justify-end gap-2.5">
         <button id="killCancel" class="btn-ghost">Cancel</button>
         <button id="killConfirm" class="btn-danger">Yes, kill everything</button>
       </div>
@@ -430,5 +495,37 @@
   </div>
 
   <script src="/app.js"></script>
+  <!-- theme + sidebar wiring (keeps app.js untouched) -->
+  <script>
+    (function () {
+      var toggle = document.getElementById('themeToggle');
+      if (toggle) toggle.addEventListener('click', function () {
+        var on = document.documentElement.classList.toggle('dark');
+        try { localStorage.setItem('darkMode', JSON.stringify(on)); } catch (e) {}
+      });
+
+      var sidebar = document.getElementById('sidebar');
+      var overlay = document.getElementById('sidebarOverlay');
+      var sbToggle = document.getElementById('sidebarToggle');
+      function openSidebar() {
+        sidebar.classList.remove('-translate-x-full');
+        sidebar.classList.add('translate-x-0');
+        overlay.classList.remove('hidden');
+      }
+      function closeSidebar() {
+        sidebar.classList.add('-translate-x-full');
+        sidebar.classList.remove('translate-x-0');
+        overlay.classList.add('hidden');
+      }
+      if (sbToggle) sbToggle.addEventListener('click', function () {
+        if (sidebar.classList.contains('-translate-x-full')) openSidebar(); else closeSidebar();
+      });
+      if (overlay) overlay.addEventListener('click', closeSidebar);
+      // close the mobile drawer after choosing a tab
+      document.querySelectorAll('.nav-item').forEach(function (n) {
+        n.addEventListener('click', function () { if (window.innerWidth < 1024) closeSidebar(); });
+      });
+    })();
+  </script>
 </body>
 </html>

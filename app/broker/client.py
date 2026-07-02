@@ -92,15 +92,27 @@ class BrokerClient:
             return {}
 
     async def get_positions(self) -> list[dict]:
-        """Return open positions (positionAmt != 0), or [] in safe mode."""
+        """Return open positions (positionAmt != 0), or [] in safe mode.
+
+        Retries transient errors with backoff — a one-off failure must NOT read
+        as "flat" (that dropped confirmed fills / orphaned grid inventory).
+        """
         if not self._ready():
             return []
-        try:
-            raw = await self._client.futures_position_information()
-            return [p for p in raw if float(p.get("positionAmt", 0) or 0) != 0.0]
-        except Exception as exc:
-            logger.error("get_positions failed: %s", exc)
-            return []
+        import asyncio
+
+        last_exc = None
+        for attempt in range(3):
+            try:
+                raw = await self._client.futures_position_information()
+                return [p for p in raw if float(p.get("positionAmt", 0) or 0) != 0.0]
+            except Exception as exc:
+                last_exc = exc
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+        # repr() so empty-message exceptions still identify the type.
+        logger.error("get_positions failed after retries: %r", last_exc)
+        return []
 
     async def get_open_orders(self, symbol: Optional[str] = None) -> list[dict]:
         """Return open orders for a symbol (or all), or [] in safe mode."""

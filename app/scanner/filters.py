@@ -87,10 +87,16 @@ def _day_trading(ind: dict, ctx: dict) -> FilterResult:
         "vwap_reclaim": vwap_reclaim,
         "atr_ok": atr_ok,
     }
-    passed = in_session and rsi_pullback and macd_flip and vwap_reclaim and atr_ok
+    # Session is a SCORE BOOSTER, not a hard gate — gating on it left
+    # day-trading dead ~16h/day (outside 07-11 / 13-17 UTC). It now trades
+    # around the clock; in-session setups just rank higher.
+    # Requiring ALL of pullback+macd+vwap on one bar was far too narrow (~0
+    # passes). Require the pullback + ATR sanity, and at least ONE momentum
+    # confirmation (MACD flip OR VWAP reclaim) — trend thesis intact, tradeable.
+    passed = rsi_pullback and atr_ok and (macd_flip or vwap_reclaim)
     trend_strength = abs(price - ema200) / price if price else 0.0
-    score = _clamp01(0.3 * vwap_reclaim + 0.3 * macd_flip + 0.2 * rsi_pullback
-                     + 0.2 * _clamp01(trend_strength * 20))
+    score = _clamp01(0.28 * vwap_reclaim + 0.28 * macd_flip + 0.18 * rsi_pullback
+                     + 0.18 * _clamp01(trend_strength * 20) + 0.08 * in_session)
     return FilterResult(filters=filters, passed=passed, score=score, side=side)
 
 

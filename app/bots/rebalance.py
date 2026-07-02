@@ -95,7 +95,8 @@ class RebalanceManager:
             bot.last_signal = "HOLD"
             bot.touch()
             return
-        self._last_rebalance = now
+        if self._holdings:                 # only stamp the timer for scheduled rebuilds
+            self._last_rebalance = now     # empty basket rebuilds immediately next tick
         traded = await self._rebalance(bot, candidates)
         bot.last_signal = "BUY" if traded else "HOLD"
         bot.touch()

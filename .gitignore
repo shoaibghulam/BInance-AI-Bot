@@ -8,3 +8,7 @@ data/
 .venv/
 venv/
 .claude/
+
+# vendored template (compiled output already copied into frontend/)
+tailadmin-free-tailwind-dashboard-template/
+node_modules/

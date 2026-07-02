@@ -15,6 +15,9 @@ const EQUITY_MAX_POINTS = 120;
 const LOG_MAX_LINES = 200;
 const LIQ_PROXIMITY = 0.10;
 const MIN_TRADES_TO_TRAIN = 50;
+const MARGIN_RISK_CUTOFFS = { warn: 50, danger: 80 };
+/* stable per-segment palette for the rebalancing donut (BOT_META colors + accents) */
+const REBAL_PALETTE = ['#3b82f6', '#a855f7', '#14b8a6', '#f5a623', '#ec4899', '#36d39a', '#f0a020', '#5e6b7d'];
 
 /* bot ids used by v2 are the strategy names */
 const BOT_IDS = ['day-trading', 'scalping', 'grid', 'dca', 'rebalancing'];
@@ -239,24 +242,16 @@ function pushEquity(v) {
 function drawSparkline() {
   const canvas = $('#equityCanvas');
   if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth || 200;
-  const cssH = canvas.clientHeight || 64;
-  if (canvas.width !== cssW * dpr) { canvas.width = cssW * dpr; canvas.height = cssH * dpr; }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssW, cssH);
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 200, 64);
 
   const pts = state.equity;
   const delta = $('#sparkDelta');
   if (pts.length < 2) { if (delta) delta.textContent = '—'; return; }
 
-  const min = Math.min(...pts), max = Math.max(...pts);
-  const range = max - min || 1;
   const pad = 4;
+  const { yOf } = _curveGeom(pts, cssW, cssH, pad);
   const w = cssW, h = cssH - pad * 2;
   const xStep = w / (pts.length - 1);
-  const yOf = (v) => pad + h - ((v - min) / range) * h;
   const rising = pts[pts.length - 1] >= pts[0];
   const color = rising ? '#16c784' : '#ea3943';
 
@@ -269,6 +264,14 @@ function drawSparkline() {
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad; ctx.fill();
 
+  // faint dashed session-open line
+  ctx.save();
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, yOf(pts[0])); ctx.lineTo(w, yOf(pts[0])); ctx.stroke();
+  ctx.restore();
+
   ctx.beginPath();
   ctx.moveTo(0, yOf(pts[0]));
   pts.forEach((v, i) => ctx.lineTo(i * xStep, yOf(v)));
@@ -278,6 +281,8 @@ function drawSparkline() {
   ctx.beginPath(); ctx.arc(lx, ly, 2.5, 0, Math.PI * 2);
   ctx.fillStyle = color; ctx.fill();
 
+  _markSparkExtremes(ctx, pts, xStep, yOf);
+
   if (delta) {
     const d = pts[pts.length - 1] - pts[0];
     const pct = pts[0] ? (d / pts[0]) * 100 : 0;
@@ -286,18 +291,47 @@ function drawSparkline() {
   }
 }
 
+/* muted dots at the min & max of the equity spark + a max-value label */
+function _markSparkExtremes(ctx, pts, xStep, yOf) {
+  let iMin = 0, iMax = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i] < pts[iMin]) iMin = i;
+    if (pts[i] > pts[iMax]) iMax = i;
+  }
+  ctx.fillStyle = 'rgba(154,167,184,0.7)';
+  for (const i of [iMin, iMax]) {
+    ctx.beginPath(); ctx.arc(i * xStep, yOf(pts[i]), 2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.save();
+  ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textBaseline = 'top';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(154,167,184,0.85)';
+  ctx.fillText(fmtUSD(pts[iMax]), (pts.length - 1) * xStep, yOf(pts[iMax]) - 12);
+  ctx.restore();
+}
+
 /* ============================================================
    POSITIONS (Overview)
    ============================================================ */
 function renderPositions(list) {
   const body = $('#positionsBody');
   const empty = $('#positionsEmpty');
-  const arr = Array.isArray(list) ? list : [];
+  // Cache the latest positions so per-bot strips, sort re-renders and liq
+  // bars can reuse the same source of truth.
+  if (Array.isArray(list)) state.allPositions = list;
+  const arr = (state.allPositions || []).slice();
   $('#posCount').textContent = arr.length;
 
   body.innerHTML = '';
   if (arr.length === 0) { empty.style.display = 'block'; return; }
   empty.style.display = 'none';
+
+  // optional click-to-sort (uPnL / notional, desc)
+  if (state.posSort) {
+    const key = state.posSort;
+    arr.sort((a, b) => (Number(b[key]) || 0) - (Number(a[key]) || 0));
+  }
 
   for (const p of arr) {
     const tr = el('tr');
@@ -314,11 +348,17 @@ function renderPositions(list) {
       <td class="num cell-mono">${fmtNum(p.size, undefined)}</td>
       <td class="num cell-mono">${fmtPrice(p.entry_price)}</td>
       <td class="num cell-mono">${fmtPrice(p.mark_price)}</td>
-      <td class="num cell-mono liq-cell ${liqNear ? 'liq-warn' : ''}">${fmtPrice(p.liquidation_price)}${liqNear ? '<span class="liq-flag" title="Mark within 10% of liquidation">⚠</span>' : ''}</td>
+      <td class="num cell-mono liq-cell ${liqNear ? 'liq-warn' : ''}">${fmtPrice(p.liquidation_price)}<canvas class="liq-bar" width="46" height="8"></canvas>${liqNear ? '<span class="liq-flag" title="Mark within 10% of liquidation">⚠</span>' : ''}</td>
       <td class="num cell-mono">${isNum(p.leverage) ? p.leverage + '×' : '—'}</td>
-      <td class="num cell-mono ${pnlClass(upnl)}">${fmtUSD(upnl, true)}<br><span style="font-size:11px;opacity:.8">${fmtPct(upnlPct, true)}</span></td>
+      <td class="num cell-mono upnl-cell"></td>
     `;
+    // uPnL cell through setWithFlash (keyed per symbol) so it pulses on change.
+    const upnlCell = tr.querySelector('.upnl-cell');
+    upnlCell.className = `num cell-mono upnl-cell ${pnlClass(upnl)}`;
+    setWithFlash(upnlCell, `pos:${p.symbol}`, '', upnl);
+    upnlCell.innerHTML = `${fmtUSD(upnl, true)}<br><span style="font-size:11px;opacity:.8">${fmtPct(upnlPct, true)}</span>`;
     body.append(tr);
+    drawLiqBar(tr.querySelector('.liq-bar'), p.mark_price, p.liquidation_price, side);
   }
 }
 
@@ -333,6 +373,7 @@ function setBotCache(list) {
     if (b && b.id) state.botStatuses[b.id] = (b.status || 'stopped').toLowerCase();
   }
   renderBots(botCache);
+  renderFleet();
   updateSidebarDots();
 }
 function replaceBot(bot) {
@@ -340,7 +381,50 @@ function replaceBot(bot) {
   if (i >= 0) botCache[i] = bot; else botCache.push(bot);
   if (bot && bot.id) state.botStatuses[bot.id] = (bot.status || 'stopped').toLowerCase();
   renderBots(botCache);
+  renderFleet();
   updateSidebarDots();
+}
+
+/* ---- Overview fleet strip: one tile per bot (all 5 first-class) ---- */
+const FLEET_STATE_LABEL = {
+  trading: 'Trading', searching: 'Searching', warming: 'Warming up',
+  cooling: 'Cooling down', stopped: 'Stopped', error: 'Halted',
+};
+function renderFleet() {
+  const strip = $('#fleetStrip');
+  if (!strip) return;
+  const order = BOT_IDS;
+  const rows = botCache.slice().sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  strip.innerHTML = '';
+  for (const b of rows) {
+    if (!BOT_IDS.includes(b.id)) continue;
+    const meta = BOT_META[b.id] || { color: '#5e6b7d', label: b.id };
+    const status = (b.status || 'stopped').toLowerCase();
+    const activity = (b.activity || (status === 'running' ? 'searching' : status)).toLowerCase();
+    const dotCls = status === 'running' ? 'running' : status === 'error' ? 'error' : 'stopped';
+    // match live positions for this bot's open symbols (aggregate uPnL).
+    const coins = (state.allPositions || []).filter((p) =>
+      (b.open_symbols || []).includes(p.symbol));
+    const pnl = coins.reduce((s, c) => s + (isNum(c.unrealized_pnl) ? c.unrealized_pnl : 0), 0);
+
+    const tile = el('button', 'fleet-tile');
+    tile.dataset.bot = b.id;
+    tile.style.borderLeft = `3px solid ${meta.color}`;
+    tile.setAttribute('aria-label', `Open ${meta.label} bot`);
+
+    const chipsHtml = coins.slice(0, 2).map((c) =>
+      `<span class="coin-chip mini">${esc(c.symbol)}</span>`).join('');
+    tile.innerHTML = `
+      <div class="ft-head"><span class="nav-dot dot-${dotCls}"></span><span class="ft-name">${esc(meta.label)}</span></div>
+      <div class="ft-state">${esc(FLEET_STATE_LABEL[activity] || activity)}</div>
+      <div class="ft-coins">${chipsHtml}</div>
+      <div class="ft-pnl mono ${coins.length ? pnlClass(pnl) : ''}"></div>
+    `;
+    const pnlNode = tile.querySelector('.ft-pnl');
+    setWithFlash(pnlNode, `fleet:${b.id}`, coins.length ? fmtUSD(pnl, true) : '—', coins.length ? pnl : null);
+    tile.addEventListener('click', () => switchTab(b.id));
+    strip.append(tile);
+  }
 }
 
 function updateSidebarDots() {
@@ -388,7 +472,10 @@ function botCard(b) {
           <span class="tdot" style="background:${meta.color}"></span>${esc(meta.label)} · ${esc(b.symbol || 'top30')}
         </div>
       </div>
-      <span class="status-pill status-${status}">${status}</span>
+      <div class="bot-status-col">
+        <span class="status-pill status-${status}">${status}</span>
+        ${running && b.activity ? `<span class="bot-activity">${esc(FLEET_STATE_LABEL[b.activity] || b.activity)}</span>` : ''}
+      </div>
     </div>
     <div class="bot-meta">
       <div><div class="m-label">PnL today</div><div class="m-val ${pnlClass(pnl)}">${fmtUSD(pnl, true)}</div></div>
@@ -562,9 +649,26 @@ function renderAiModel(m) {
     }
   }
 
-  // Accuracy-over-time: draw the bot with the richest history.
-  $('#aiAccBot').textContent = bestHist.bot ? `${bestHist.bot} · ${bestHist.hist.length} retrains` : '—';
-  drawCurve('#aiAccCanvas', '#aiAccEmpty', normalizeCurve(bestHist.hist), '#8b5cf6');
+  // Accuracy-over-time: overlay ALL bots that have any history.
+  const series = (m.per_bot || [])
+    .map((b) => ({ color: (BOT_META[b.id] || BOT_META[b.bot] || {}).color || '#8b5cf6',
+      label: b.bot, pts: normalizeCurve(b.accuracy_history) }))
+    .filter((s) => s.pts.length >= 2);
+  $('#aiAccBot').textContent = series.length ? `${series.length} models` : '—';
+  // y-domain padded around observed accuracy so movement is visible.
+  let amin = 0.5, amax = 0.5;
+  for (const s of series) for (const v of s.pts) { amin = Math.min(amin, v); amax = Math.max(amax, v); }
+  drawMultiCurve('#aiAccCanvas', '#aiAccEmpty', series,
+    { baseline: 0.5, yDomain: [Math.min(0.4, amin), Math.max(0.7, amax)] });
+  const legend = $('#aiAccLegend');
+  if (legend) {
+    legend.innerHTML = '';
+    for (const s of series) {
+      const item = el('span', 'ai-legend-item');
+      item.innerHTML = `<span class="lg-dot" style="background:${s.color}"></span>${esc(s.label)}`;
+      legend.append(item);
+    }
+  }
 
   const ex = $('#aiExplain');
   if (ex) ex.innerHTML = `
@@ -658,19 +762,90 @@ async function loadBotDetail(id) {
   // render header shell immediately from static meta (no blank state)
   renderBotHeaderShell(id);
   // fetch the 4 data endpoints in parallel; each renders independently
-  const [detail, trades, scan, ind, ml] = await Promise.allSettled([
+  const [detail, trades, scan, ind, ml, positions] = await Promise.allSettled([
     apiGet(`/api/bots/${encodeURIComponent(id)}`),
     apiGet(`/api/bots/${encodeURIComponent(id)}/trades`),
     apiGet(`/api/bots/${encodeURIComponent(id)}/scanner`),
     apiGet(`/api/bots/${encodeURIComponent(id)}/indicators`),
     apiGet(`/api/bots/${encodeURIComponent(id)}/ml`),
+    apiGet('/api/positions'),
   ]);
   if (state.activeBot !== id) return; // user switched away
+  state.allPositions = positions.status === 'fulfilled'
+    ? (Array.isArray(positions.value) ? positions.value : (positions.value.positions || []))
+    : [];
   if (detail.status === 'fulfilled') renderBotDetail(detail.value, id);
   if (trades.status === 'fulfilled') renderTrades(trades.value);
-  if (scan.status === 'fulfilled') renderScanner(scan.value);
+  if (scan.status === 'fulfilled') { state.lastScan = scan.value; renderScanner(scan.value); }
   if (ind.status === 'fulfilled') renderIndicators(ind.value);
   if (ml.status === 'fulfilled') renderML(ml.value);
+}
+
+/* ---- Bot status strip: Now trading [coin] · P/L | Searching… | Stopped ---- */
+function renderBotStrip(detail, id) {
+  const strip = $('#bdStrip');
+  if (!strip) return;
+  const status = (detail && detail.status || 'stopped').toLowerCase();
+  const openSyms = (detail && detail.open_symbols) || [];
+  const act = (detail && detail.activity) || null;  // backend-authoritative state
+  // Match this bot's symbols to live positions for P/L.
+  const coins = (state.allPositions || []).filter((p) => openSyms.includes(p.symbol));
+  let stateName, label, pnl = null;
+  if (status === 'error' && !openSyms.length) { stateName = 'error'; label = 'Halted — see log'; }
+  else if (status !== 'running') { stateName = 'stopped'; label = 'Stopped'; }
+  else if (openSyms.length) {
+    stateName = 'trading';
+    label = openSyms.length > 1 ? `Trading ${openSyms.length} coins` : 'Now trading';
+    pnl = coins.reduce((s, c) => s + (isNum(c.unrealized_pnl) ? c.unrealized_pnl : 0), 0);
+  } else {
+    if (act === 'error') { stateName = 'error'; label = 'Halted — see log'; }
+    else if (act === 'warming') { stateName = 'warming'; label = 'Warming up scanner…'; }
+    else if (act === 'cooling') { stateName = 'cooling'; label = 'Cooling down (rate-limit)…'; }
+    else { stateName = 'searching'; label = 'Searching for a coin…'; }
+  }
+
+  strip.dataset.state = stateName;
+  $('#bdStripLabel').textContent = label;
+  const chips = $('#bdStripCoins'); chips.innerHTML = '';
+  if (stateName === 'trading') {
+    for (const sym of openSyms) {
+      const pos = coins.find((c) => c.symbol === sym);
+      const chip = el('span', 'coin-chip');
+      let html = `<span class="cc-sym">${esc(sym)}</span>`;
+      if (pos) {
+        html += ` <span class="pill pill-${(pos.side || 'LONG').toLowerCase()}">${esc(pos.side || '')}</span>`;
+        html += ` <span class="cc-pnl ${pnlClass(pos.unrealized_pnl)}">${fmtUSD(pos.unrealized_pnl, true)}</span>`;
+      }
+      chip.innerHTML = html;
+      chips.append(chip);
+    }
+  } else if (stateName === 'searching') {
+    const cands = ((state.lastScan && state.lastScan.results) || []).filter((r) => r.passed).slice(0, 3);
+    if (cands.length) for (const r of cands) chips.append(el('span', 'coin-chip searching', r.symbol));
+    else chips.append(el('span', 'coin-chip searching', 'scanning market…'));
+  }
+  const pnlNode = $('#bdStripPnl');
+  if (pnl == null) {
+    pnlNode.className = 'strip-pnl-val mono';
+    setWithFlash(pnlNode, 'stripPnl', '—', null);
+  } else {
+    pnlNode.className = `strip-pnl-val mono ${pnlClass(pnl)}`;
+    setWithFlash(pnlNode, 'stripPnl', fmtUSD(pnl, true), pnl);
+  }
+
+  // Trading → live equity sparkline; otherwise clear it.
+  const spark = $('#bdStripSpark');
+  if (spark) {
+    if (stateName === 'trading') {
+      spark.style.display = 'inline-block';
+      drawCurve('#bdStripSpark', null, (state.equity || []).slice(-40),
+        (BOT_META[id] || {}).color || 'auto');
+    } else {
+      spark.style.display = 'none';
+      const c = spark.getContext && spark.getContext('2d');
+      if (c) c.clearRect(0, 0, spark.width, spark.height);
+    }
+  }
 }
 
 function renderBotHeaderShell(id) {
@@ -712,6 +887,9 @@ function renderBotDetail(d, id) {
     $('#cfgTakeProfit').value = isNum(cfg.take_profit_r) ? cfg.take_profit_r : '';
     $('#cfgLeverage').value = isNum(d.leverage) ? d.leverage : '';
     $('#cfgMinWinProb').value = isNum(cfg.min_win_prob) ? cfg.min_win_prob : '';
+    $('#cfgInvest').value = isNum(cfg.investment_usdt) && cfg.investment_usdt > 0 ? cfg.investment_usdt : '';
+    $('#cfgSlPct').value = isNum(cfg.stop_loss_pct) && cfg.stop_loss_pct > 0 ? cfg.stop_loss_pct : '';
+    $('#cfgTpPct').value = isNum(cfg.take_profit_pct) && cfg.take_profit_pct > 0 ? cfg.take_profit_pct : '';
   }
   // indicators from config override static meta if present
   if (Array.isArray(cfg.indicators) && cfg.indicators.length) {
@@ -722,6 +900,7 @@ function renderBotDetail(d, id) {
 
   renderPerformance(d.performance || {}, d.updated_at);
   renderStrategyState(d.strategy_state, id);
+  renderBotStrip(d, id);
 }
 
 /* ---- Panel 2b: Strategy state (grid / DCA / rebalancing) ---- */
@@ -730,12 +909,18 @@ function renderStrategyState(ss, id) {
   const body = $('#bdStrategyBody');
   const title = $('#bdStrategyTitle');
   const sub = $('#bdStrategySub');
-  if (!ss || !['grid', 'dca', 'rebalancing'].includes(id)) {
+  if (!ss || !['grid', 'dca', 'rebalancing', 'day-trading', 'scalping'].includes(id)) {
     panel.hidden = true;
     return;
   }
   panel.hidden = false;
   body.innerHTML = '';
+  const color = (BOT_META[id] || {}).color || '#16c784';
+  // per-symbol mark price from live positions.
+  const markOf = (sym) => {
+    const p = (state.allPositions || []).find((q) => q.symbol === sym);
+    return p && isNum(p.mark_price) ? p.mark_price : null;
+  };
 
   if (id === 'grid') {
     title.textContent = 'Grid ladder';
@@ -745,6 +930,11 @@ function renderStrategyState(ss, id) {
       return;
     }
     sub.textContent = ss.symbol || '—';
+    const markPrice = markOf(ss.symbol);
+    const c = el('canvas', 'strat-canvas'); c.id = 'gridLadderCanvas'; c.height = 180;
+    const em = el('div', 'empty-state'); em.id = 'gridLadderEmpty'; em.hidden = true;
+    body.append(c, em);
+    drawGridLadder('#gridLadderCanvas', '#gridLadderEmpty', ss, markPrice, color);
     const stats = el('div', 'perf-stats');
     stats.append(
       kv('Coin', ss.symbol || '—'),
@@ -760,7 +950,13 @@ function renderStrategyState(ss, id) {
     const deals = (ss.open_deals || []);
     sub.textContent = deals.length ? `${deals.length} open` : 'idle';
     if (!deals.length) { body.append(el('div', 'empty-state', 'No open deal.')); return; }
+    const soCount = (state.botDetail && state.botDetail.config &&
+      state.botDetail.config.safety_order_count) || null;
     for (const dl of deals) {
+      const markPrice = markOf(dl.symbol);
+      const c = el('canvas', 'dca-be'); c.height = 46;
+      body.append(c);
+      drawDcaBreakeven(c, dl, markPrice, soCount || dl.safety_orders_filled, color);
       const stats = el('div', 'perf-stats');
       stats.append(
         kv('Coin', dl.symbol || '—'),
@@ -777,17 +973,66 @@ function renderStrategyState(ss, id) {
     const legs = (ss.basket || []);
     sub.textContent = legs.length ? `${legs.length} legs · ${fmtNum(ss.total_notional, 2)} notional` : 'idle';
     if (!legs.length) { body.append(el('div', 'empty-state', 'Basket empty.')); return; }
+    const c = el('canvas', 'strat-canvas'); c.id = 'rebalDonutCanvas'; c.height = 200;
+    const em = el('div', 'empty-state'); em.id = 'rebalDonutEmpty'; em.hidden = true;
+    body.append(c, em);
+    const tgt = (state.botDetail && state.botDetail.config &&
+      state.botDetail.config.target_weights) || null;
+    drawRebalDonut('#rebalDonutCanvas', '#rebalDonutEmpty', legs, ss.total_notional, tgt);
+    const grid = el('div', 'perf-stats');
     for (const lg of legs) {
-      const stats = el('div', 'perf-stats');
-      stats.append(
+      grid.append(
         kv('Coin', lg.symbol || '—'),
         kv('Qty', isNum(lg.qty) ? fmtNum(lg.qty, 4) : '—'),
         kv('Avg entry', fmtPrice(lg.avg_entry)),
         kv('Notional', isNum(lg.notional) ? fmtNum(lg.notional, 2) : '—'),
       );
-      body.append(stats);
+    }
+    body.append(grid);
+  } else {
+    // day-trading / scalping — single directional position.
+    title.textContent = id === 'scalping' ? 'Scalp position' : 'Day-trade position';
+    const openSyms = (state.botDetail && state.botDetail.open_symbols) || [];
+    const pos = (state.allPositions || []).find((p) => openSyms.includes(p.symbol));
+    if (!pos) {
+      sub.textContent = 'flat';
+      body.append(el('div', 'empty-state', id === 'scalping'
+        ? 'Flat — waiting for a momentum setup.'
+        : 'Flat — waiting for a session-gated setup.'));
+      return;
+    }
+    sub.textContent = pos.symbol || '—';
+    const c = el('canvas', 'strat-canvas'); c.id = 'posLadderCanvas'; c.height = 120;
+    body.append(c);
+    drawPosLadder(c, pos, color);
+    const card = el('div', 'pos-card');
+    const rMult = _rMultiple(pos);
+    card.append(
+      kv('Entry', fmtPrice(pos.entry_price)),
+      kv('Mark', fmtPrice(pos.mark_price)),
+      kv('Stop', fmtPrice(pos.stop_loss ?? pos.sl_price)),
+      kv('Target', fmtPrice(pos.take_profit ?? pos.tp_price)),
+      kv('R-multiple', rMult == null ? '—' : rMult.toFixed(2) + 'R'),
+    );
+    body.append(card);
+    if (id === 'day-trading') {
+      const chip = el('div', 'session-chip',
+        (state.lastScan && state.lastScan.results || []).some((r) => r._session_active)
+          ? 'Session active' : 'Session gated');
+      body.append(chip);
     }
   }
+}
+
+/* R-multiple = (mark - entry) / (entry - stop), sign-aware for SHORT */
+function _rMultiple(pos) {
+  const entry = pos.entry_price, mark = pos.mark_price;
+  const stop = pos.stop_loss != null ? pos.stop_loss : pos.sl_price;
+  if (!isNum(entry) || !isNum(mark) || !isNum(stop)) return null;
+  const risk = Math.abs(entry - stop);
+  if (risk <= 0) return null;
+  const dir = (pos.side || 'LONG').toUpperCase() === 'SHORT' ? -1 : 1;
+  return (dir * (mark - entry)) / risk;
 }
 function kv(label, value) {
   const c = el('div', 'pstat');
@@ -841,32 +1086,43 @@ function normalizeCurve(curve) {
   return curve.map((pt) => Array.isArray(pt) ? pt[1] : pt).filter(isNum);
 }
 
-/* generic line chart (equity curve, accuracy-over-time) */
-function drawCurve(canvasSel, emptySel, pts, baseColor) {
-  const canvas = $(canvasSel);
-  const empty = emptySel ? $(emptySel) : null;
-  if (!canvas) return;
+/* ---- Shared canvas helpers (DPR-correct sizing + curve geometry) ---- */
+function _dprCanvas(canvas, fbW, fbH) {
   const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth || 300;
-  const cssH = canvas.clientHeight || 120;
+  const cssW = canvas.clientWidth || fbW, cssH = canvas.clientHeight || fbH;
   if (canvas.width !== cssW * dpr) { canvas.width = cssW * dpr; canvas.height = cssH * dpr; }
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
+  return { ctx, cssW, cssH };
+}
+function _curveGeom(pts, cssW, cssH, pad, yDomain) {
+  const min = yDomain ? yDomain[0] : Math.min(...pts);
+  const max = yDomain ? yDomain[1] : Math.max(...pts);
+  const range = (max - min) || 1;
+  const w = cssW - pad * 2, h = cssH - pad * 2;
+  const xStep = w / (pts.length - 1);
+  return { min, max, range, w, h, xStep, yOf: (v) => pad + h - ((v - min) / range) * h };
+}
+
+/* generic line chart (equity curve, accuracy-over-time)
+   opts (all optional): { baseline, hoverX, yDomain } */
+function drawCurve(canvasSel, emptySel, pts, baseColor, opts) {
+  const canvas = $(canvasSel);
+  const empty = emptySel ? $(emptySel) : null;
+  if (!canvas) return;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 120);
 
   if (!pts || pts.length < 2) {
     if (empty) empty.hidden = false;
-    canvas.style.display = pts && pts.length ? 'block' : 'block';
+    canvas.style.display = 'block';
     return;
   }
   if (empty) empty.hidden = true;
 
-  const min = Math.min(...pts), max = Math.max(...pts);
-  const range = max - min || 1;
   const pad = 8;
-  const w = cssW - pad * 2, h = cssH - pad * 2;
-  const xStep = w / (pts.length - 1);
-  const yOf = (v) => pad + h - ((v - min) / range) * h;
+  const o = opts || {};
+  const { w, h, xStep, yOf } = _curveGeom(pts, cssW, cssH, pad, o.yDomain);
   const rising = pts[pts.length - 1] >= pts[0];
   const color = baseColor === 'auto' ? (rising ? '#16c784' : '#ea3943') : baseColor;
 
@@ -876,6 +1132,24 @@ function drawCurve(canvasSel, emptySel, pts, baseColor) {
   for (let g = 0; g <= 3; g++) {
     const y = pad + (h / 3) * g;
     ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(pad + w, y); ctx.stroke();
+  }
+
+  // drawdown shading — fill under-water segments (below the running max) in red
+  let runMax = pts[0];
+  for (let i = 1; i < pts.length; i++) {
+    const prevMax = runMax;
+    runMax = Math.max(runMax, pts[i]);
+    if (pts[i] < prevMax || pts[i - 1] < prevMax) {
+      const x0 = pad + (i - 1) * xStep, x1 = pad + i * xStep;
+      ctx.beginPath();
+      ctx.moveTo(x0, yOf(pts[i - 1]));
+      ctx.lineTo(x1, yOf(pts[i]));
+      ctx.lineTo(x1, pad + h);
+      ctx.lineTo(x0, pad + h);
+      ctx.closePath();
+      ctx.fillStyle = hexA('#ea3943', 0.10);
+      ctx.fill();
+    }
   }
 
   // area
@@ -888,6 +1162,15 @@ function drawCurve(canvasSel, emptySel, pts, baseColor) {
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad; ctx.fill();
 
+  // dashed starting baseline
+  const baseVal = o.baseline != null ? o.baseline : pts[0];
+  ctx.save();
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, yOf(baseVal)); ctx.lineTo(pad + w, yOf(baseVal)); ctx.stroke();
+  ctx.restore();
+
   // line
   ctx.beginPath();
   ctx.moveTo(pad, yOf(pts[0]));
@@ -896,12 +1179,92 @@ function drawCurve(canvasSel, emptySel, pts, baseColor) {
 
   const lx = pad + (pts.length - 1) * xStep, ly = yOf(pts[pts.length - 1]);
   ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+
+  // hover crosshair + label (wired once per canvas)
+  if (!canvas.dataset.wired) {
+    canvas.dataset.wired = '1';
+    canvas.addEventListener('mousemove', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      canvas.dataset.hoverIdx = String(Math.round((e.clientX - rect.left - pad) / xStep));
+      if (canvas._redraw) canvas._redraw();
+    });
+    canvas.addEventListener('mouseleave', () => {
+      delete canvas.dataset.hoverIdx;
+      if (canvas._redraw) canvas._redraw();
+    });
+  }
+  canvas._redraw = () => drawCurve(canvasSel, emptySel, pts, baseColor, opts);
+  const hi = canvas.dataset.hoverIdx != null ? parseInt(canvas.dataset.hoverIdx, 10) : null;
+  if (hi != null && hi >= 0 && hi < pts.length) {
+    const hx = pad + hi * xStep, hy = yOf(pts[hi]);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hx, pad); ctx.lineTo(hx, pad + h); ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, hy, 3, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+    const lbl = o.hoverPct ? fmtPct(pts[hi] * 100) : fmtUSD(pts[hi]);
+    ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+    ctx.textBaseline = 'top';
+    const tw = ctx.measureText(lbl).width + 8;
+    const bx = Math.min(Math.max(hx - tw / 2, pad), pad + w - tw);
+    ctx.fillStyle = 'rgba(8,12,18,0.9)';
+    roundRect(ctx, bx, pad + 2, tw, 16, 3); ctx.fill();
+    ctx.fillStyle = '#e6edf5';
+    ctx.textAlign = 'left';
+    ctx.fillText(lbl, bx + 4, pad + 4);
+    ctx.restore();
+  }
 }
 function hexA(hex, a) {
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
   if (!m) return `rgba(22,199,132,${a})`;
   const n = parseInt(m[1], 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/* multi-series line chart (accuracy over time across all bots).
+   series = [{ color, label, pts }]; opts = { baseline, yDomain }. */
+function drawMultiCurve(canvasSel, emptySel, series, opts) {
+  const canvas = $(canvasSel);
+  const empty = emptySel ? $(emptySel) : null;
+  if (!canvas) return;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 120);
+  const drawable = (series || []).filter((s) => Array.isArray(s.pts) && s.pts.length >= 2);
+  if (!drawable.length) { if (empty) empty.hidden = false; return; }
+  if (empty) empty.hidden = true;
+
+  const o = opts || {};
+  const pad = 8, w = cssW - pad * 2, h = cssH - pad * 2;
+  // shared y-domain across all series
+  let min = Infinity, max = -Infinity;
+  for (const s of drawable) for (const v of s.pts) { if (v < min) min = v; if (v > max) max = v; }
+  if (o.yDomain) { min = o.yDomain[0]; max = o.yDomain[1]; }
+  const range = (max - min) || 1;
+  const yOf = (v) => pad + h - ((v - min) / range) * h;
+
+  // grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  for (let g = 0; g <= 3; g++) {
+    const y = pad + (h / 3) * g;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(pad + w, y); ctx.stroke();
+  }
+  // dashed baseline (e.g. 0.5 coin-flip accuracy)
+  if (o.baseline != null && o.baseline >= min && o.baseline <= max) {
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad, yOf(o.baseline)); ctx.lineTo(pad + w, yOf(o.baseline)); ctx.stroke();
+    ctx.restore();
+  }
+  for (const s of drawable) {
+    const xStep = w / (s.pts.length - 1);
+    ctx.beginPath();
+    ctx.moveTo(pad, yOf(s.pts[0]));
+    s.pts.forEach((v, i) => ctx.lineTo(pad + i * xStep, yOf(v)));
+    ctx.strokeStyle = s.color || '#8b5cf6'; ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.stroke();
+    const lx = pad + (s.pts.length - 1) * xStep, ly = yOf(s.pts[s.pts.length - 1]);
+    ctx.beginPath(); ctx.arc(lx, ly, 2.4, 0, Math.PI * 2); ctx.fillStyle = s.color || '#8b5cf6'; ctx.fill();
+  }
 }
 
 /* recent trades table */
@@ -1060,7 +1423,11 @@ function renderML(data) {
   }
 
   // accuracy-over-time: metrics.history = [[ts, accuracy], ...]
-  drawCurve('#mlAccCanvas', '#mlAccEmpty', normalizeCurve(m.history), '#3b82f6');
+  const accPts = normalizeCurve(m.history);
+  let lo = 0.4, hi = 0.7;
+  for (const v of accPts) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  drawCurve('#mlAccCanvas', '#mlAccEmpty', accPts, '#3b82f6',
+    { baseline: 0.5, yDomain: [lo, hi], hoverPct: true });
 
   // feature importance bar chart
   drawFeatureBars(d.feature_importance);
@@ -1126,6 +1493,260 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/* ============================================================
+   STRATEGY-TAILORED CANVAS CHARTS
+   ============================================================ */
+
+/* Grid ladder: vertical band_low→band_high axis, evenly-spaced rungs,
+   first `filled_levels` solid teal / rest dashed hollow, bright mark line. */
+function drawGridLadder(sel, emptySel, ss, markPrice, color) {
+  const canvas = $(sel);
+  if (!canvas) return;
+  const empty = emptySel ? $(emptySel) : null;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 180);
+  const lo = ss.band_low, hi = ss.band_high;
+  if (!ss.active || !isNum(lo) || !isNum(hi) || hi <= lo) {
+    if (empty) { empty.hidden = false; empty.textContent = 'No active grid.'; }
+    return;
+  }
+  if (empty) empty.hidden = true;
+  const pad = 12;
+  const h = cssH - pad * 2;
+  const labelW = 62;
+  const xLeft = pad + labelW, xRight = cssW - pad;
+  const yOf = (v) => pad + h - ((v - lo) / (hi - lo)) * h;
+  const levels = Math.max(1, ss.active_levels || 0);
+  const filled = Math.max(0, Math.min(levels, ss.filled_levels || 0));
+  const mid = isNum(markPrice) ? markPrice : (lo + hi) / 2;
+
+  // band edges (bold) + tinted zones (buys below mid teal, sells above red)
+  ctx.fillStyle = hexA('#14b8a6', 0.08);
+  ctx.fillRect(xLeft, yOf(mid), xRight - xLeft, yOf(lo) - yOf(mid));
+  ctx.fillStyle = hexA('#ea3943', 0.07);
+  ctx.fillRect(xLeft, yOf(hi), xRight - xLeft, yOf(mid) - yOf(hi));
+
+  ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'right';
+  for (const edge of [lo, hi]) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(xLeft, yOf(edge)); ctx.lineTo(xRight, yOf(edge)); ctx.stroke();
+    ctx.fillStyle = '#9aa7b8';
+    ctx.fillText(fmtPrice(edge), xLeft - 4, yOf(edge));
+  }
+
+  // rungs
+  for (let i = 0; i < levels; i++) {
+    const v = lo + ((hi - lo) * i) / (levels - 1 || 1);
+    const y = yOf(v);
+    ctx.beginPath();
+    if (i < filled) {
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#14b8a6'; ctx.lineWidth = 2;
+    } else {
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(154,167,184,0.5)'; ctx.lineWidth = 1;
+    }
+    ctx.moveTo(xLeft, y); ctx.lineTo(xRight, y); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // mark line (bright)
+  if (isNum(markPrice) && markPrice >= lo && markPrice <= hi) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(xLeft, yOf(markPrice)); ctx.lineTo(xRight, yOf(markPrice)); ctx.stroke();
+    ctx.fillStyle = color; ctx.textAlign = 'left';
+    ctx.fillText(fmtPrice(markPrice), xRight - 48, yOf(markPrice) - 8);
+  }
+}
+
+/* DCA break-even: horizontal track with BE (avg entry), TP (target), mark;
+   progress fill toward target + safety-order pips below. */
+function drawDcaBreakeven(canvas, deal, markPrice, safetyCount, color) {
+  if (!canvas) return;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 46);
+  const be = deal.avg_entry, tp = deal.target_price;
+  const mark = isNum(markPrice) ? markPrice : be;
+  const pad = 10;
+  const trackY = 16, x0 = pad, x1 = cssW - pad, tw = x1 - x0;
+  const isShort = (deal.side || 'LONG').toUpperCase() === 'SHORT';
+  let frac = 0;
+  if (isNum(be) && isNum(tp) && tp !== be) {
+    frac = (mark - be) / (tp - be);
+    if (isShort) frac = (be - mark) / (be - tp);
+  }
+  frac = Math.max(0, Math.min(1, frac));
+
+  // base track
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  roundRect(ctx, x0, trackY - 3, tw, 6, 3); ctx.fill();
+  // progress fill (green toward target, red if under-water)
+  const fillCls = frac >= 0.5 ? '#16c784' : color;
+  const uw = isNum(mark) && isNum(be) && ((!isShort && mark < be) || (isShort && mark > be));
+  ctx.fillStyle = uw ? '#ea3943' : fillCls;
+  roundRect(ctx, x0, trackY - 3, tw * frac, 6, 3); ctx.fill();
+
+  // ticks
+  ctx.font = '9px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textBaseline = 'bottom';
+  const tick = (xf, col, lbl) => {
+    const x = x0 + tw * Math.max(0, Math.min(1, xf));
+    ctx.strokeStyle = col; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(x, trackY - 7); ctx.lineTo(x, trackY + 7); ctx.stroke();
+    ctx.fillStyle = col; ctx.textAlign = 'center';
+    ctx.fillText(lbl, x, trackY - 8);
+  };
+  tick(0, '#9aa7b8', 'BE');
+  tick(1, '#f5a623', 'TP');
+  tick(frac, color, fmtPct(frac * 100));
+
+  // safety-order pips below
+  const n = Math.max(0, safetyCount || 0);
+  const filled = Math.max(0, deal.safety_orders_filled || 0);
+  if (n > 0) {
+    const gap = tw / (n + 1);
+    for (let i = 1; i <= n; i++) {
+      ctx.beginPath();
+      ctx.arc(x0 + gap * i, trackY + 16, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = i <= filled ? color : 'rgba(154,167,184,0.4)';
+      ctx.fill();
+    }
+  }
+}
+
+/* Rebalancing donut: arcs sized by notional share, target-weight outer ring,
+   drift-tinted. Falls back to a stacked bar for >8 legs. */
+function drawRebalDonut(sel, emptySel, basket, totalNotional, targetWeights) {
+  const canvas = $(sel);
+  if (!canvas) return;
+  const empty = emptySel ? $(emptySel) : null;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 200);
+  const legs = (basket || []).filter((l) => isNum(l.notional) && l.notional > 0);
+  const total = isNum(totalNotional) && totalNotional > 0
+    ? totalNotional : legs.reduce((s, l) => s + l.notional, 0);
+  if (!legs.length || total <= 0) {
+    if (empty) { empty.hidden = false; empty.textContent = 'Basket empty.'; }
+    return;
+  }
+  if (empty) empty.hidden = true;
+  const n = legs.length;
+  const tgtOf = (i) => (targetWeights && isNum(targetWeights[legs[i].symbol]))
+    ? targetWeights[legs[i].symbol] : 1 / n;
+
+  if (n > 8) {
+    // stacked horizontal allocation bar
+    const pad = 12, y = cssH / 2 - 10, barH = 20, tw = cssW - pad * 2;
+    let x = pad;
+    legs.forEach((l, i) => {
+      const w = tw * (l.notional / total);
+      ctx.fillStyle = REBAL_PALETTE[i % REBAL_PALETTE.length];
+      ctx.fillRect(x, y, w, barH);
+      x += w;
+    });
+    return;
+  }
+
+  const cx = cssW / 2, cy = cssH / 2, R = Math.min(cx, cy) - 14, hole = R * 0.55;
+  let a0 = -Math.PI / 2;
+  legs.forEach((l, i) => {
+    const share = l.notional / total;
+    const a1 = a0 + share * Math.PI * 2;
+    const col = REBAL_PALETTE[i % REBAL_PALETTE.length];
+    // main arc
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, R, a0, a1);
+    ctx.closePath();
+    ctx.fillStyle = col; ctx.fill();
+    // target-weight thin outer arc + drift tint
+    const tgt = tgtOf(i);
+    const drift = share - tgt;
+    const driftPct = Math.abs(drift) * 100;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 5, a0, a0 + tgt * Math.PI * 2);
+    ctx.strokeStyle = driftPct >= MARGIN_RISK_CUTOFFS.warn / 5 ? '#ea3943'
+      : driftPct >= 5 ? '#f5a623' : 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    a0 = a1;
+  });
+  // punch the hole
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.beginPath(); ctx.arc(cx, cy, hole, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // center label
+  ctx.fillStyle = '#e6edf5';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '600 15px ui-monospace, Menlo, Consolas, monospace';
+  ctx.fillText(fmtCompact(total), cx, cy - 6);
+  ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+  ctx.fillStyle = '#9aa7b8';
+  ctx.fillText(`${n} legs`, cx, cy + 10);
+}
+
+/* Position ladder: vertical price ladder SL / entry / mark / TP + R readout. */
+function drawPosLadder(canvas, pos, color) {
+  if (!canvas) return;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 300, 120);
+  const entry = pos.entry_price, mark = pos.mark_price;
+  const sl = pos.stop_loss != null ? pos.stop_loss : pos.sl_price;
+  const tp = pos.take_profit != null ? pos.take_profit : pos.tp_price;
+  const vals = [entry, mark, sl, tp].filter(isNum);
+  if (vals.length < 2) {
+    ctx.fillStyle = '#9aa7b8';
+    ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Awaiting position marks…', cssW / 2, cssH / 2);
+    return;
+  }
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = 12, h = cssH - pad * 2, labelW = 58;
+  const xLeft = pad + labelW, xRight = cssW - pad;
+  const range = (hi - lo) || 1;
+  const yOf = (v) => pad + h - ((v - lo) / range) * h;
+  const lines = [
+    { v: sl, c: '#ea3943', lbl: 'SL' },
+    { v: entry, c: '#9aa7b8', lbl: 'Entry' },
+    { v: mark, c: color, lbl: 'Mark' },
+    { v: tp, c: '#16c784', lbl: 'TP' },
+  ];
+  ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textBaseline = 'middle';
+  for (const ln of lines) {
+    if (!isNum(ln.v)) continue;
+    ctx.strokeStyle = ln.c; ctx.lineWidth = ln.lbl === 'Mark' ? 1.8 : 1.2;
+    ctx.beginPath(); ctx.moveTo(xLeft, yOf(ln.v)); ctx.lineTo(xRight, yOf(ln.v)); ctx.stroke();
+    ctx.fillStyle = ln.c; ctx.textAlign = 'right';
+    ctx.fillText(`${ln.lbl} ${fmtPrice(ln.v)}`, xLeft - 4 + labelW, yOf(ln.v));
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9aa7b8';
+    ctx.fillText(ln.lbl, pad, yOf(ln.v));
+  }
+  const r = _rMultiple(pos);
+  if (r != null) {
+    ctx.fillStyle = r >= 0 ? '#16c784' : '#ea3943';
+    ctx.textAlign = 'right'; ctx.font = '600 11px ui-monospace, Menlo, Consolas, monospace';
+    ctx.fillText(`${r.toFixed(2)}R`, xRight, pad + 2);
+  }
+}
+
+/* Liquidation proximity bar: fuller + redder as mark nears liq. */
+function drawLiqBar(canvas, mark, liq, side) {
+  if (!canvas) return;
+  const { ctx, cssW, cssH } = _dprCanvas(canvas, 46, 8);
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  roundRect(ctx, 0, 0, cssW, cssH, 3); ctx.fill();
+  if (!isNum(mark) || !isNum(liq) || liq <= 0 || mark <= 0) return;
+  const dist = Math.abs(mark - liq) / mark;         // 0 = at liq
+  const prox = 1 - Math.max(0, Math.min(1, dist / LIQ_PROXIMITY)); // 1 = touching
+  const col = prox >= MARGIN_RISK_CUTOFFS.danger / 100 ? '#ea3943'
+    : prox >= MARGIN_RISK_CUTOFFS.warn / 100 ? '#f5a623' : '#16c784';
+  ctx.fillStyle = col;
+  roundRect(ctx, 0, 0, cssW * prox, cssH, 3); ctx.fill();
+}
+
 function renderPredictions(preds) {
   const arr = Array.isArray(preds) ? preds : [];
   const wrap = $('#mlPreds');
@@ -1162,6 +1783,9 @@ async function saveBotConfig(e) {
     take_profit_r: parseFloat($('#cfgTakeProfit').value),
     leverage: parseInt($('#cfgLeverage').value, 10),
     min_win_prob: parseFloat($('#cfgMinWinProb').value),
+    investment_usdt: parseFloat($('#cfgInvest').value),
+    stop_loss_pct: parseFloat($('#cfgSlPct').value),
+    take_profit_pct: parseFloat($('#cfgTpPct').value),
   };
   // drop NaN fields so we never POST garbage
   Object.keys(body).forEach((k) => { if (typeof body[k] === 'number' && !isFinite(body[k])) delete body[k]; });
@@ -1332,7 +1956,7 @@ function dispatchFrame(type, data) {
   switch (type) {
     case 'status':    renderStatus(data); break;
     case 'account':   renderAccount(data); break;
-    case 'positions': renderPositions(data); break;
+    case 'positions': renderPositions(data); renderFleet(); if (state.activeBot) renderBotStrip(state.botDetail, state.activeBot); break;
     case 'bots':      setBotCache(data); break;
     case 'log':       if (data) appendLog(data); break;
     case 'equity':    if (data) pushEquity(data.equity); break;
@@ -1381,6 +2005,18 @@ function init() {
   wireKillModal();
   wireNav();
   $('#bdConfigForm').addEventListener('submit', saveBotConfig);
+  const startAll = $('#startAllBtn');
+  if (startAll) startAll.addEventListener('click', async () => {
+    startAll.disabled = true; startAll.textContent = 'Starting…';
+    try { await apiPost('/api/bots/start-all', {}); } catch (_) {}
+    setTimeout(() => { startAll.disabled = false; startAll.textContent = 'Start all'; }, 3000);
+  });
+  const stopAll = $('#stopAllBtn');
+  if (stopAll) stopAll.addEventListener('click', async () => {
+    stopAll.disabled = true;
+    try { await apiPost('/api/bots/stop-all', {}); } catch (_) {}
+    setTimeout(() => { stopAll.disabled = false; }, 2000);
+  });
   $('#mlRetrain').addEventListener('click', retrainML);
 
   // safe-mode zeros immediately so nothing is blank/NaN
@@ -1394,11 +2030,33 @@ function init() {
   connectWS();
   startPolling();
 
+  // click-to-sort positions by uPnL / notional (desc; click again to clear)
+  const posTable = $('#positionsTable');
+  if (posTable) {
+    const ths = posTable.querySelectorAll('thead th');
+    const uPnlTh = ths[ths.length - 1];      // uPnL column
+    const sizeTh = ths[2];                    // Size (proxy for notional)
+    const bindSort = (th, key) => {
+      if (!th) return;
+      th.classList.add('sortable');
+      th.addEventListener('click', () => {
+        state.posSort = state.posSort === key ? null : key;
+        renderPositions(state.allPositions);
+      });
+    };
+    bindSort(uPnlTh, 'unrealized_pnl');
+    bindSort(sizeTh, 'notional');
+  }
+
   window.addEventListener('resize', () => {
-    if (state.activeTab === 'overview') drawSparkline();
+    if (state.activeTab === 'overview') { drawSparkline(); renderPositions(state.allPositions); renderFleet(); }
     else if (state.activeBot) {
       const p = state.botDetail && state.botDetail.performance;
       drawCurve('#botEquityCanvas', '#botEquityEmpty', normalizeCurve(p && p.equity_curve), '#16c784');
+      if (state.botDetail && state.botDetail.strategy_state) {
+        renderStrategyState(state.botDetail.strategy_state, state.activeBot);
+      }
+      renderBotStrip(state.botDetail, state.activeBot);
     }
   });
 }

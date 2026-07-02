@@ -74,6 +74,7 @@ class RiskEngine:
         mark_price: Optional[float] = None,
         leverage: Optional[int] = None,
         stop_distance: Optional[float] = None,
+        target_notional: Optional[float] = None,
     ) -> Optional[OrderPlan]:
         """Return a risk-approved `OrderPlan`, or None to skip the trade.
 
@@ -133,10 +134,16 @@ class RiskEngine:
             return None
         raw_qty = risk_budget / stop_dist
 
-        # --- Clamp by advisory size_hint (0..1) ---
-        size_hint = Decimal(str(max(0.0, min(1.0, signal.size_hint or 0.0))))
-        if size_hint > 0:
-            raw_qty = raw_qty * size_hint
+        # --- Fixed investment override: size to a target notional (USDT) if the
+        # bot config sets one. The per-symbol / gross / margin caps below still
+        # clamp it, so a user-set investment can never breach risk limits. ---
+        if target_notional and float(target_notional) > 0:
+            raw_qty = Decimal(str(target_notional)) / price
+        else:
+            # --- Clamp by advisory size_hint (0..1) ---
+            size_hint = Decimal(str(max(0.0, min(1.0, signal.size_hint or 0.0))))
+            if size_hint > 0:
+                raw_qty = raw_qty * size_hint
 
         # --- Per-symbol notional cap: a % of EQUITY (NOT * leverage) ---
         max_symbol_notional = equity * (

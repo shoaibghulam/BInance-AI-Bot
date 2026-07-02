@@ -1,0 +1,11 @@
+{
+  "name": "the-trader-frontend",
+  "private": true,
+  "scripts": {
+    "css": "tailwindcss -c tailwind.config.js -i ./frontend/tailwind.input.css -o ./frontend/dashboard.css --minify",
+    "css:watch": "tailwindcss -c tailwind.config.js -i ./frontend/tailwind.input.css -o ./frontend/dashboard.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

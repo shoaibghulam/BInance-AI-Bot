@@ -29,6 +29,10 @@ logger = logging.getLogger("trader.ml.trainer")
 
 MIN_SAMPLES_TO_START = 50
 RETRAIN_EVERY = 25
+# Minimum validation AUC before the model is allowed to VETO entries. Below
+# this the model is treated as no-edge (coin-flip) and the bot trades on pure
+# indicator rules instead of being starved by a noisy gate.
+MIN_GATE_AUC = 0.55
 MODELS_DIR = os.path.join("data", "models")
 
 
@@ -141,6 +145,19 @@ class ModelTrainer:
             return None
         return model.predict_proba(features)
 
+    def gate_has_edge(self, bot_id: str) -> bool:
+        """True only if the model may VETO trades — i.e. it has real edge.
+
+        A model whose validation AUC is at/below coin-flip (~0.5) is noise;
+        letting it block entries just starves the bot. We require AUC >=
+        MIN_GATE_AUC before the win-probability threshold is enforced.
+        """
+        model = self._get_or_load(bot_id)
+        if model is None or not model.trained:
+            return False
+        auc = (model.metrics() or {}).get("auc")
+        return auc is not None and auc >= MIN_GATE_AUC
+
     def live_predictions(
         self, bot_id: str, scan_results: list[dict], top_n: int = 10
     ) -> list[dict]:
@@ -204,6 +221,7 @@ class ModelTrainer:
             "model_type": model.model_type() if is_trained else (
                 (model or WinProbModel(bot_id)).model_type()),
             "calibrated": bool(is_trained and model.calibrated),
+            "gate_active": self.gate_has_edge(bot_id),
             "n_parameters": int(metrics.get("n_parameters", 0) or 0),
             "train_duration_s": round(self._last_duration.get(bot_id, 0.0), 2),
             "training_samples": int(metrics.get("n_samples", n_closed) or n_closed),

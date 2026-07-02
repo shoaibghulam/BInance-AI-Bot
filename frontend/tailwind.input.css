@@ -1,0 +1,298 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------
+   The Trader — TailAdmin-style component layer.
+   NOTE: these semantic classes are emitted DYNAMICALLY by app.js
+   (e.g. `status-${status}`, `dot-${st}`, `sig-${sig}`), so they are
+   authored as PLAIN CSS (not inside @layer components) to guarantee
+   they survive Tailwind's content purge. @apply still resolves here.
+   ------------------------------------------------------------------ */
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-800 font-outfit dark:bg-gray-900 dark:text-gray-300;
+  }
+}
+
+/* ---- pnl / value helpers ---- */
+.up    { @apply text-success-600 dark:text-success-500; }
+.down  { @apply text-error-600 dark:text-error-500; }
+.muted { @apply text-gray-400; }
+.mono  { @apply font-mono tabular-nums; }
+.flash-up   { @apply text-success-600 dark:text-success-500 transition-colors; }
+.flash-down { @apply text-error-600 dark:text-error-500 transition-colors; }
+
+/* ---- env badge ---- */
+.env-badge   { @apply rounded-full px-2 py-0.5 text-theme-xs font-semibold; }
+.env-mainnet { @apply bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+.env-testnet { @apply bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400; }
+.env-unknown { @apply bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400; }
+
+/* ---- connection / status dots ---- */
+.dot, .nav-dot, .bd-dot { @apply inline-block h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600; }
+.dot-on, .dot-running   { @apply bg-success-500; }
+.dot-wait               { @apply bg-warning-500; }
+.dot-off, .dot-stopped  { @apply bg-gray-400 dark:bg-gray-600; }
+.dot-error              { @apply bg-error-500; }
+
+/* ---- banners ---- */
+.banner        { @apply flex items-center gap-3 rounded-lg border px-4 py-3 text-sm; }
+.banner-danger { @apply border-error-500/30 bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+.banner-warn   { @apply border-warning-500/30 bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400; }
+.banner-icon   { @apply shrink-0 text-base; }
+.banner-action { @apply ml-auto rounded-lg border border-current px-3 py-1 text-theme-xs font-medium; }
+
+/* ---- status pills ---- */
+.status-pill    { @apply inline-block rounded-full px-2 py-0.5 text-theme-xs font-medium capitalize; }
+.status-running { @apply bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.status-stopped { @apply bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400; }
+.status-error   { @apply bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+.status-paused  { @apply bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400; }
+
+/* ---- ml badges ---- */
+.ml-badge    { @apply inline-block rounded-full px-2 py-0.5 text-theme-xs font-medium; }
+.ml-trained  { @apply bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.ml-training { @apply bg-brand-50 text-brand-500 dark:bg-brand-500/15 dark:text-brand-400; }
+.ml-warming  { @apply bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400; }
+.ml-error    { @apply bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+.ml-backend  { @apply text-theme-xs text-gray-400; }
+
+/* ---- log lines ---- */
+.log-body  { @apply max-h-72 overflow-y-auto pr-1; }
+.log-line  { @apply flex gap-2 py-0.5 text-theme-xs; }
+.log-time  { @apply shrink-0 text-gray-400; }
+.log-tag   { @apply shrink-0 font-semibold; }
+.log-msg   { @apply break-all text-gray-600 dark:text-gray-400; }
+.log-info  .log-tag { @apply text-gray-500; }
+.log-warn  .log-tag { @apply text-warning-600 dark:text-orange-400; }
+.log-error .log-tag { @apply text-error-600 dark:text-error-500; }
+.log-debug .log-tag { @apply text-gray-400; }
+.log-empty { @apply py-4 text-center text-theme-xs text-gray-400; }
+
+/* ---- signal chips (uppercase suffix) ---- */
+.sig-BUY, .sig-LONG   { @apply rounded bg-success-50 px-1.5 py-0.5 text-theme-xs font-semibold text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.sig-SELL, .sig-SHORT { @apply rounded bg-error-50 px-1.5 py-0.5 text-theme-xs font-semibold text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+.sig-HOLD             { @apply rounded bg-gray-100 px-1.5 py-0.5 text-theme-xs font-semibold text-gray-500 dark:bg-gray-800 dark:text-gray-400; }
+
+/* ---- side pills ---- */
+.pill       { @apply inline-block rounded-full px-2 py-0.5 text-theme-xs font-medium; }
+.pill-long  { @apply bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.pill-short { @apply bg-error-50 text-error-600 dark:bg-error-500/15 dark:text-error-500; }
+
+/* ---- filter / outcome chips ---- */
+.filters      { @apply flex flex-wrap gap-1; }
+.fchip        { @apply inline-flex items-center rounded px-1.5 py-0.5 text-theme-xs; }
+.fchip-pass   { @apply bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.fchip-fail   { @apply bg-gray-100 text-gray-400 dark:bg-gray-800; }
+.outcome-win  { @apply font-medium text-success-600 dark:text-success-500; }
+.outcome-loss { @apply font-medium text-error-600 dark:text-error-500; }
+.ready-flag   { @apply text-success-500; }
+.row-ready td { @apply bg-success-500/[0.04]; }
+
+/* ---- cards ---- */
+.card       { @apply rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] md:p-6; }
+.card-head  { @apply flex items-center justify-between; }
+.card-label { @apply text-sm text-gray-500 dark:text-gray-400; }
+.card-value { @apply mt-2 text-title-sm font-bold text-gray-800 dark:text-white/90; }
+.card-value.sm { @apply text-lg; }
+.card-foot  { @apply mt-1 text-theme-xs text-gray-400; }
+.spark-delta { @apply text-theme-xs; }
+.spark-canvas { @apply mt-2 w-full; }
+
+/* ---- meters / bars ---- */
+.meter, .winbar, .bf-bar, .cfg-rail::after {
+  @apply mt-2 block h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800;
+}
+.meter-fill, .winbar-fill, .bf-fill {
+  @apply block h-full rounded-full bg-brand-500 transition-[width] duration-500;
+}
+
+/* ---- panels ---- */
+.panel      { @apply rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03]; }
+.panel-head { @apply mb-4 flex items-center justify-between gap-3; }
+.panel-head h2 { @apply text-lg font-semibold text-gray-800 dark:text-white/90; }
+.panel-sub  { @apply text-theme-xs text-gray-400; }
+.badge-count { @apply ml-1 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-theme-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400; }
+
+/* ---- buttons ---- */
+.btn         { @apply rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-white/[0.06]; }
+.btn-primary { @apply rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white shadow-theme-xs hover:bg-brand-600; }
+.btn-ghost   { @apply rounded-lg px-3 py-1.5 text-theme-sm font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5; }
+.btn-danger  { @apply rounded-lg bg-error-500 px-4 py-2 text-sm font-medium text-white hover:bg-error-600; }
+.kill-btn    { @apply flex items-center gap-2 rounded-lg bg-error-500 px-4 py-2 text-sm font-semibold text-white hover:bg-error-600 disabled:cursor-not-allowed disabled:opacity-50; }
+.bots-actions { @apply flex gap-2; }
+.log-tools   { @apply flex items-center gap-3; }
+.autoscroll  { @apply flex items-center gap-1 text-theme-sm text-gray-500; }
+.bot-toggle  { @apply rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-60; }
+.to-start    { @apply bg-brand-500 text-white hover:bg-brand-600; }
+.to-stop     { @apply bg-error-500 text-white hover:bg-error-600; }
+
+/* ---- tables ---- */
+.table-wrap { @apply overflow-x-auto; }
+.data-table { @apply min-w-full text-sm; }
+.data-table thead th { @apply whitespace-nowrap py-3 pr-3 text-left text-theme-xs font-medium text-gray-500 dark:text-gray-400; }
+.data-table thead th.sortable { @apply cursor-pointer select-none hover:text-brand-500; }
+.data-table tbody tr { @apply border-t border-gray-100 dark:border-gray-800; }
+.data-table td { @apply py-3 pr-3 align-top text-gray-700 dark:text-gray-300; }
+.data-table.compact td, .data-table.compact thead th { @apply py-2; }
+.num, .num.cell-mono { @apply text-right; }
+.cell-mono, .sym { @apply font-mono tabular-nums; }
+.sym { @apply font-semibold text-gray-800 dark:text-white/90; }
+.empty-state, .config-skeleton { @apply py-6 text-center text-sm text-gray-400; }
+.liq-cell { @apply relative; }
+.liq-warn { @apply text-error-500; }
+.liq-bar  { @apply ml-1 inline-block align-middle; }
+.liq-flag { @apply ml-1 text-warning-500; }
+
+/* ---- config rails ---- */
+.config-grid { @apply grid grid-cols-2 gap-3; }
+.cfg-row   { @apply flex flex-col gap-1 rounded-lg border border-gray-100 p-3 dark:border-gray-800; }
+.cfg-label { @apply text-theme-xs text-gray-400; }
+.cfg-val   { @apply font-mono text-sm font-medium text-gray-800 dark:text-white/90; }
+
+/* ---- bots grid + cards ---- */
+.bots-grid    { @apply grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3; }
+.bots-skeleton { @apply grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3; }
+.skel { @apply h-28 animate-pulse rounded-2xl bg-gray-100 dark:bg-gray-800; }
+.bot-card   { @apply rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]; }
+.bot-card.clickable { @apply cursor-pointer transition-colors hover:border-brand-300 dark:hover:border-brand-500/50; }
+.bot-card.is-running { @apply ring-1 ring-inset ring-success-500/30; }
+.bot-card.is-error   { @apply ring-1 ring-inset ring-error-500/40; }
+.bot-top { @apply flex items-start justify-between; }
+.bot-id  { @apply text-sm font-semibold text-gray-800 dark:text-white/90; }
+.bot-type { @apply mt-0.5 flex items-center gap-1.5 text-theme-xs text-gray-400; }
+.tdot { @apply inline-block h-2 w-2 rounded-full; }
+.bot-status-col { @apply flex flex-col items-end gap-1; }
+.bot-activity { @apply text-theme-xs text-gray-400; }
+.bot-meta { @apply mt-3 grid grid-cols-2 gap-2; }
+.m-label  { @apply text-theme-xs text-gray-400; }
+.m-val    { @apply font-mono text-sm font-medium text-gray-700 dark:text-gray-200; }
+.bot-signal { @apply inline-block; }
+.bot-foot { @apply mt-3 flex items-center justify-between; }
+
+/* ---- fleet strip ---- */
+.fleet { }
+.fleet-tile { @apply rounded-2xl border border-gray-200 bg-white p-3 text-left transition-colors hover:border-brand-300 dark:border-gray-800 dark:bg-white/[0.03] dark:hover:border-brand-500/50; }
+.ft-head  { @apply flex items-center gap-2; }
+.ft-name  { @apply text-sm font-medium text-gray-800 dark:text-white/90; }
+.ft-state { @apply mt-1 text-theme-xs text-gray-400; }
+.ft-coins { @apply mt-2 flex flex-wrap gap-1; }
+.ft-pnl   { @apply mt-2 font-mono text-sm; }
+.coin-chip { @apply inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-theme-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300; }
+.coin-chip.mini { @apply px-1.5; }
+.coin-chip.searching { @apply bg-warning-50 text-warning-600 dark:bg-warning-500/15 dark:text-orange-400; }
+.cc-sym { @apply font-mono font-semibold; }
+.cc-pnl { @apply font-mono; }
+
+/* ---- bot detail header ---- */
+.bot-detail-head { @apply mb-4; }
+.bd-head-top { @apply flex items-center justify-between gap-3; }
+.bd-title { @apply flex items-center gap-2; }
+.bd-title h2 { @apply text-lg font-semibold text-gray-800 dark:text-white/90; }
+.bd-actions { @apply flex gap-2; }
+.bd-desc { @apply mt-2 max-w-3xl text-sm text-gray-500 dark:text-gray-400; }
+.bd-indicators { @apply mt-3 flex flex-wrap gap-1.5; }
+.ind-chip { @apply inline-block rounded-full bg-gray-100 px-2 py-0.5 text-theme-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300; }
+
+/* ---- bot live strip ---- */
+.bd-strip { @apply mt-4 flex flex-wrap items-center gap-4 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-800 dark:bg-white/[0.02]; }
+.strip-state { @apply flex items-center gap-2; }
+.strip-pulse { @apply inline-block h-2.5 w-2.5 rounded-full bg-gray-400; }
+.bd-strip[data-state="trading"] .strip-pulse { @apply animate-pulse bg-success-500; }
+.bd-strip[data-state="searching"] .strip-pulse,
+.bd-strip[data-state="warming"] .strip-pulse,
+.bd-strip[data-state="cooling"] .strip-pulse { @apply animate-pulse bg-warning-500; }
+.bd-strip[data-state="error"] .strip-pulse { @apply bg-error-500; }
+.strip-label { @apply text-sm font-medium text-gray-700 dark:text-gray-200; }
+.strip-coins { @apply flex flex-wrap items-center gap-2; }
+.strip-pnl { @apply ml-auto flex items-center gap-2; }
+.strip-pnl-label { @apply text-theme-xs text-gray-400; }
+.strip-pnl-val { @apply font-mono text-sm font-semibold; }
+.strip-spark { @apply h-8 w-24; }
+
+/* ---- bot config form ---- */
+.bd-config { @apply mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4; }
+.cfg-field { @apply flex flex-col; }
+.cfg-field label { @apply mb-1 block text-theme-xs text-gray-500 dark:text-gray-400; }
+.cfg-field input, .cfg-field select {
+  @apply h-11 w-full rounded-lg border border-gray-200 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none focus:ring focus:ring-brand-500/10 dark:border-gray-800 dark:bg-white/[0.03] dark:text-white/90;
+}
+.cfg-submit { @apply col-span-2 flex items-center gap-3 sm:col-span-3 lg:col-span-4; }
+.cfg-status { @apply text-theme-xs text-gray-400; }
+.cfg-status.ok  { @apply text-success-600 dark:text-success-500; }
+.cfg-status.err { @apply text-error-600 dark:text-error-500; }
+
+/* ---- bot detail grids / bodies ---- */
+.bot-grid { @apply grid grid-cols-1 gap-4 xl:grid-cols-2; }
+.bd-body  { @apply flex flex-col gap-4; }
+
+/* ---- performance / stats ---- */
+.perf-stats { @apply grid grid-cols-2 gap-3 sm:grid-cols-3; }
+.pstat { @apply rounded-lg border border-gray-100 p-3 dark:border-gray-800; }
+.p-label { @apply text-theme-xs text-gray-400; }
+.p-val { @apply mt-1 font-mono text-sm font-semibold text-gray-800 dark:text-white/90; }
+.perf-winrate { @apply rounded-lg border border-gray-100 p-3 dark:border-gray-800; }
+.pw-head { @apply flex items-center justify-between text-sm text-gray-600 dark:text-gray-300; }
+.pw-sub { @apply mt-2 text-theme-xs; }
+.curve-wrap { @apply rounded-lg border border-gray-100 p-3 dark:border-gray-800; }
+.curve-label { @apply mb-2 text-theme-xs font-medium text-gray-500 dark:text-gray-400; }
+.bot-curve { @apply w-full; }
+
+/* ---- strategy state ---- */
+.strat-canvas { @apply w-full; }
+.dca-be { @apply w-full; }
+.pos-card { @apply grid grid-cols-2 gap-3 sm:grid-cols-3; }
+.session-chip { @apply inline-block rounded-full bg-brand-50 px-2 py-0.5 text-theme-xs font-medium text-brand-500 dark:bg-brand-500/15 dark:text-brand-400; }
+
+/* ---- indicators ---- */
+.ind-list { @apply grid grid-cols-1 gap-3 sm:grid-cols-2; }
+.ind-card { @apply rounded-lg border border-gray-200 p-3 dark:border-gray-800; }
+.ind-card.ready { @apply border-success-500/40; }
+.ind-card-head { @apply flex items-center justify-between; }
+.ind-sym { @apply font-mono font-semibold text-gray-800 dark:text-white/90; }
+.ind-vals { @apply mt-2 grid grid-cols-2 gap-x-3 gap-y-1; }
+.ind-kv { @apply flex items-center justify-between text-theme-xs; }
+.ind-kv .k { @apply text-gray-400; }
+.ind-kv .v { @apply font-mono text-gray-700 dark:text-gray-200; }
+.ind-conds { @apply mt-2 flex flex-wrap gap-1; }
+.cond { @apply inline-block rounded px-1.5 py-0.5 text-theme-xs; }
+.cond.on  { @apply bg-success-50 text-success-600 dark:bg-success-500/15 dark:text-success-500; }
+.cond.off { @apply bg-gray-100 text-gray-400 dark:bg-gray-800; }
+
+/* ---- ml insight ---- */
+.panel-ai .bd-body { @apply gap-4; }
+.ai-top { @apply flex items-center gap-2; }
+.ai-note { @apply rounded-lg bg-warning-50 px-3 py-2 text-theme-xs text-warning-600 dark:bg-warning-500/10 dark:text-orange-400; }
+.ai-stats { @apply grid grid-cols-2 gap-3 sm:grid-cols-3; }
+.ml-preds { @apply flex flex-col gap-2; }
+.ml-pred { @apply flex items-center gap-3; }
+.mp-sym { @apply w-24 shrink-0 font-mono text-theme-sm text-gray-700 dark:text-gray-200; }
+.mp-bar { @apply h-2 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800; }
+.mp-bar-fill { @apply block h-full rounded-full bg-brand-500; }
+.mp-prob { @apply w-12 shrink-0 text-right font-mono text-theme-sm; }
+
+/* ---- AI model tab ---- */
+.ai-head { @apply mb-4 flex flex-wrap items-end justify-between gap-4; }
+.ai-title { @apply text-2xl font-bold text-gray-800 dark:text-white/90; }
+.ai-sub { @apply mt-1 text-sm text-gray-500 dark:text-gray-400; }
+.ai-actions { @apply flex flex-wrap items-center gap-2; }
+.ai-lookback { @apply flex items-center gap-2 text-theme-sm text-gray-500 dark:text-gray-400; }
+.ai-lookback select { @apply h-10 rounded-lg border border-gray-200 bg-transparent px-2 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-800 dark:text-white/90; }
+.bf-meta { @apply mt-2 text-theme-xs text-gray-400; }
+.ai-grid { @apply grid grid-cols-1 gap-4 xl:grid-cols-2; }
+.ai-legend { @apply mt-3 flex flex-wrap gap-3; }
+.ai-legend-item { @apply inline-flex items-center gap-1.5 text-theme-xs text-gray-500 dark:text-gray-400; }
+.lg-dot { @apply inline-block h-2.5 w-2.5 rounded-full; }
+.ai-explain { @apply text-sm leading-relaxed text-gray-600 dark:text-gray-300; }
+.ai-explain p { @apply mb-3; }
+.ai-explain strong { @apply font-semibold text-gray-800 dark:text-white/90; }
+.ai-points { @apply mb-3 ml-5 list-disc space-y-1; }
+
+/* ---- footer / modal ---- */
+.modal-overlay { @apply fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 p-4; }
+.modal { @apply w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900; }
+.modal h3 { @apply text-lg font-semibold text-gray-800 dark:text-white/90; }
+.modal p { @apply mt-2 text-sm text-gray-500 dark:text-gray-400; }
+.modal-actions { @apply mt-5 flex justify-end gap-2; }

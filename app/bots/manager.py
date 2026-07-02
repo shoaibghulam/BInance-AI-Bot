@@ -208,6 +208,9 @@ class Bot:
             ),
             "indicators": list(self.config["indicators"]),
             "min_win_prob": self.min_win_prob,
+            "investment_usdt": self.config.get("investment_usdt", 0.0),
+            "stop_loss_pct": self.config.get("stop_loss_pct", 0.0),
+            "take_profit_pct": self.config.get("take_profit_pct", 0.0),
         }
         # Surface the strategy-specific tunables for grid / dca / rebalancing.
         if self.id == "dca":
@@ -332,10 +335,19 @@ class BotManager:
         detail = bot.detail_dict()
         if bot_id == "dca":
             detail["strategy_state"] = self._dca.strategy_state()
+            detail["open_symbols"] = [d["symbol"] for d in
+                                      self._dca.strategy_state().get("open_deals", [])]
         elif bot_id == "grid":
-            detail["strategy_state"] = self._grid.strategy_state()
+            ss = self._grid.strategy_state()
+            detail["strategy_state"] = ss
+            detail["open_symbols"] = [ss["symbol"]] if ss.get("active") and ss.get("symbol") else []
         elif bot_id == "rebalancing":
-            detail["strategy_state"] = self._rebalance.strategy_state()
+            ss = self._rebalance.strategy_state()
+            detail["strategy_state"] = ss
+            detail["open_symbols"] = [l["symbol"] for l in ss.get("basket", [])]
+        else:
+            # single-entry bots: symbols come from live open trades.
+            detail["open_symbols"] = [t["symbol"] for t in bot.open_trades.values()]
         return detail
 
     def update_config(self, bot_id: str, payload: dict) -> Optional[dict]:
@@ -361,6 +373,15 @@ class BotManager:
             )
         if "min_win_prob" in payload and payload["min_win_prob"] is not None:
             bot.min_win_prob = max(0.0, min(1.0, float(payload["min_win_prob"])))
+        # Explicit money controls (0 / unset = use risk-% defaults):
+        # investment_usdt = fixed notional per trade (capped by risk limits);
+        # stop_loss_pct / take_profit_pct = % of entry, override ATR-based SL/TP.
+        if "investment_usdt" in payload and payload["investment_usdt"] is not None:
+            bot.config["investment_usdt"] = max(0.0, float(payload["investment_usdt"]))
+        if "stop_loss_pct" in payload and payload["stop_loss_pct"] is not None:
+            bot.config["stop_loss_pct"] = max(0.0, min(50.0, float(payload["stop_loss_pct"])))
+        if "take_profit_pct" in payload and payload["take_profit_pct"] is not None:
+            bot.config["take_profit_pct"] = max(0.0, min(100.0, float(payload["take_profit_pct"])))
         if "leverage" in payload and payload["leverage"] is not None:
             requested = int(payload["leverage"])
             cap = self._risk._capped_leverage()
@@ -409,8 +430,12 @@ class BotManager:
             bot.status = "running"
             bot.enabled = True
             bot.touch()
+            # Warm the scan cache for THIS strategy immediately so the bot can
+            # find a coin on its first ticks instead of waiting for the shared
+            # scan loop's next cycle (cold-start "doesn't find a coin" fix).
+            asyncio.create_task(self._scanner.refresh(bot_id, force=True))
             bot._task = asyncio.create_task(self._run_loop(bot))
-            logger.info("Bot %s started.", bot_id)
+            logger.info("Bot %s started (warming scan).", bot_id)
         return bot.summary_dict()
 
     async def stop(self, bot_id: str) -> Optional[dict]:
@@ -427,6 +452,9 @@ class BotManager:
 
     async def halt_all(self) -> int:
         """Stop every running bot (used by the kill switch). Returns count."""
+        # Snapshot who was running so a kill-switch RESET can resume them.
+        self._halted_running = [b.id for b in self._bots.values()
+                                if b.status == "running"]
         count = 0
         for bot in self._bots.values():
             if bot.status == "running":
@@ -446,6 +474,19 @@ class BotManager:
             b.stats.open_positions = 0
         logger.warning("Halted %d bots; cleared strategy state.", count)
         return count
+
+    async def resume_halted(self) -> list[str]:
+        """Restart bots that were running when the kill switch halted them."""
+        ids = list(getattr(self, "_halted_running", []))
+        started = []
+        for bot_id in ids:
+            if self._bots.get(bot_id) is not None:
+                await self.start(bot_id)
+                started.append(bot_id)
+        self._halted_running = []
+        if started:
+            logger.info("Resumed %d bots after kill-switch reset: %s", len(started), started)
+        return started
 
     async def shutdown(self) -> None:
         """Cancel all loops on app shutdown."""
@@ -596,34 +637,33 @@ class BotManager:
                 logger.debug("Bot %s task ended with: %s", bot.id, exc)
 
     async def _run_loop(self, bot: Bot) -> None:
-        """Bot loop: scan → ML gate → risk size → (testnet) place; never crashes."""
-        try:
-            while True:
-                if self._kill_switch is not None and self._kill_switch.active:
-                    bot.status = "stopped"
-                    bot.enabled = False
-                    bot.touch()
-                    return
-                await self._tick(bot)
-                await asyncio.sleep(_LOOP_INTERVAL_S)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # never let a bot crash the app
-            # A bot managing open positions must NOT die permanently on a
-            # transient error (DB hiccup, network blip) — that would leave its
-            # positions unmanaged with no SL/TP firing. Log loudly and SELF-HEAL
-            # after a short cooldown so exit management resumes.
-            logger.error("Bot %s loop error: %s — self-healing in %.0fs.",
-                         bot.id, exc, _LOOP_ERROR_COOLDOWN_S, exc_info=True)
-            bot.status = "error"
-            bot.touch()
+        """Bot loop: scan → ML gate → risk size → (testnet) place; never crashes.
+
+        Self-heals IN PLACE: a transient error logs loudly, waits a cooldown,
+        and continues the SAME task (no create_task re-spawn) so stop()/cancel
+        always control the one live task and no tasks leak or double-run.
+        """
+        while True:  # outer self-heal loop (same task)
             try:
-                await asyncio.sleep(_LOOP_ERROR_COOLDOWN_S)
+                while True:
+                    if self._kill_switch is not None and self._kill_switch.active:
+                        bot.status = "stopped"
+                        bot.enabled = False
+                        bot.touch()
+                        return
+                    await self._tick(bot)
+                    await asyncio.sleep(_LOOP_INTERVAL_S)
             except asyncio.CancelledError:
                 raise
-            bot.status = "running"
-            bot.touch()
-            bot._task = asyncio.create_task(self._run_loop(bot))
+            except Exception as exc:  # never let a bot crash the app
+                logger.error("Bot %s loop error: %s — self-healing in %.0fs.",
+                             bot.id, exc, _LOOP_ERROR_COOLDOWN_S, exc_info=True)
+                bot.status = "error"
+                bot.touch()
+                await asyncio.sleep(_LOOP_ERROR_COOLDOWN_S)  # CancelledError propagates
+                bot.status = "running"
+                bot.touch()
+                # loop back around — same task keeps running.
 
     async def _tick(self, bot: Bot) -> None:
         """One bot tick. Single-entry bots use the standard path; grid/dca have
@@ -633,6 +673,8 @@ class BotManager:
         keep their own held-symbol/position bookkeeping inside their managers.
         """
         scan = self._scanner.cached(bot.id)
+        if not self._scanner.has_cache(bot.id):
+            asyncio.create_task(self._scanner.refresh(bot.id, force=True))  # lock dedupes
         results = scan.get("results", [])
 
         # Grid and DCA run dedicated multi-order mechanics.
@@ -827,7 +869,14 @@ class BotManager:
 
         if win_prob is not None:
             row["win_prob"] = round(win_prob, 4)
-            if win_prob < bot.min_win_prob:
+            # ONLY let the model VETO an entry when it has real predictive edge
+            # (validation AUC above a floor). A ~0.5-AUC model is coin-flip
+            # noise, so blocking on its win_prob just starves the bot of trades.
+            # In that case we keep the win_prob for display but fall back to the
+            # indicator rule (which already passed in the scanner).
+            gate_active = (self._trainer is not None
+                           and self._trainer.gate_has_edge(bot.id))
+            if gate_active and win_prob < bot.min_win_prob:
                 return None
         # else: warming up — pure indicator rule already passed in the scanner.
 
@@ -854,14 +903,20 @@ class BotManager:
         account = await self._account()
         filters = await self._broker.get_exchange_filters(symbol)
 
-        # SL distance from ATR(14), CLAMPED into a sane % band of entry price.
+        # SL distance: explicit stop_loss_pct override, else ATR(14) clamped.
         entry_price = float(row.get("last_price") or 0.0)
         atr = (row.get("_indicators") or {}).get("atr14")
-        stop_distance = self._sane_stop_distance(entry_price, atr,
-                                                 bot.config["stop_loss_atr"])
+        sl_pct = float(bot.config.get("stop_loss_pct", 0.0) or 0.0)
+        if sl_pct > 0 and entry_price > 0:
+            stop_distance = entry_price * (sl_pct / 100.0)
+        else:
+            stop_distance = self._sane_stop_distance(entry_price, atr,
+                                                     bot.config["stop_loss_atr"])
         if stop_distance is None:
             return False  # no usable entry price
 
+        # Fixed investment override (USDT notional per trade), capped by risk.
+        invest = float(bot.config.get("investment_usdt", 0.0) or 0.0)
         plan = self._risk.size_position(
             signal=signal,
             account=account,
@@ -871,6 +926,7 @@ class BotManager:
             mark_price=row.get("last_price"),
             leverage=bot.leverage,
             stop_distance=stop_distance,
+            target_notional=invest if invest > 0 else None,
         )
         if plan is None:
             return False
@@ -878,7 +934,11 @@ class BotManager:
         # SL / TP from the entry. sl_dist comes from the clamped distance the
         # plan used; TP = take_profit_r * sl_dist (so TP% is bounded too).
         sl_dist = abs(float(plan.entry_price) - float(plan.stop_price))
-        tp_dist = bot.config["take_profit_r"] * sl_dist
+        tp_pct = float(bot.config.get("take_profit_pct", 0.0) or 0.0)
+        if tp_pct > 0:
+            tp_dist = float(plan.entry_price) * (tp_pct / 100.0)
+        else:
+            tp_dist = bot.config["take_profit_r"] * sl_dist
 
         # CONNECTED: record the open ONLY on a confirmed real fill. If the order
         # raises or returns an error/None, log and bail — never record a phantom.

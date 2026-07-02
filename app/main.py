@@ -194,6 +194,9 @@ class BotConfigUpdate(BaseModel):
     timeframe: str | None = None
     stop_loss_atr: float | None = None
     take_profit_r: float | None = None
+    investment_usdt: float | None = Field(default=None, ge=0)
+    stop_loss_pct: float | None = Field(default=None, ge=0, le=50)
+    take_profit_pct: float | None = Field(default=None, ge=0, le=100)
     min_win_prob: float | None = None
     leverage: int | None = None
     margin_type: str | None = None
@@ -268,6 +271,35 @@ class AppState:
         """Strategies the scan loop should refresh: running OR WS-subscribed."""
         running = {b["id"] for b in self.bots.list() if b.get("status") == "running"}
         return running | set(self.active_bots)
+
+    def bots_with_activity(self) -> list[dict]:
+        """bots.list() rows + additive backend-truth `activity` per bot.
+
+        `activity` is one of: error | stopped | trading | cooling | warming |
+        searching. It is derived from (status, open positions, scan_state) so
+        the UI can show a live per-bot state for ALL bots without guessing.
+        """
+        rows = self.bots.list()
+        for r in rows:
+            bid = r["id"]
+            scan = self.scanner.scan_state(bid)
+            detail = self.bots.detail(bid)
+            open_syms = detail.get("open_symbols", []) if detail else []
+            open_n = len(open_syms)
+            r["open_symbols"] = open_syms  # additive: lets the UI fleet strip show live coins
+            if r["status"] == "error":
+                r["activity"] = "error"
+            elif r["status"] != "running":
+                r["activity"] = "stopped"
+            elif open_n > 0:
+                r["activity"] = "trading"
+            elif scan == "banned":
+                r["activity"] = "cooling"
+            elif scan == "cold":
+                r["activity"] = "warming"
+            else:
+                r["activity"] = "searching"
+        return rows
 
     # --- Payload builders (used by REST + WS) ---
     async def status_payload(self) -> dict:
@@ -354,6 +386,7 @@ async def lifespan(app: FastAPI):
 
 
 _SCAN_LOOP_INTERVAL_S = 5.0  # wake cadence; per-strategy refresh honors CACHE_TTL_S
+_SCAN_CONCURRENCY = 3   # max strategies refreshed at once (2 on mainnet if -1003 risk)
 
 
 async def _scan_loop(state: AppState) -> None:
@@ -363,19 +396,27 @@ async def _scan_loop(state: AppState) -> None:
     Honors the scanner's CACHE_TTL_S (a no-op refresh just returns the cache)
     and backs off automatically while the scanner is in a -1003 ban window, so
     requests always read instantly from cache and we never hammer the API.
+
+    Refreshes due strategies concurrently (bounded by _SCAN_CONCURRENCY),
+    dispatching cold (never-scanned) strategies before stale ones so a
+    freshly-subscribed bot gets its first scan without waiting behind others.
+    Each `refresh` self-serializes via its per-strategy lock and re-checks the
+    ban/fresh guards, so the concurrency here never double-scans.
     """
     while True:
         try:
-            if state.scanner.is_banned:
-                # Inside the rate-limit back-off window; skip this cycle.
-                pass
-            else:
-                for bot_id in state.bots_to_scan():
-                    if state.scanner.is_fresh(bot_id):
-                        continue
-                    await state.scanner.refresh(bot_id)
-                    if state.scanner.is_banned:
-                        break  # a ban this cycle → stop early, back off
+            if not state.scanner.is_banned:
+                due = [b for b in state.bots_to_scan() if not state.scanner.is_fresh(b)]
+                due.sort(key=lambda b: state.scanner.has_cache(b))  # cold (False) first
+                sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+
+                async def _refresh_one(bid: str) -> None:
+                    async with sem:
+                        if not state.scanner.is_banned:
+                            await state.scanner.refresh(bid)
+
+                await asyncio.gather(*(_refresh_one(b) for b in due),
+                                     return_exceptions=True)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # never let the scan loop die
@@ -439,7 +480,7 @@ async def _ws_pusher(state: AppState) -> None:
                             make_frame("log", {"level": "error",
                                                "msg": f"KILL SWITCH: {breach}"})
                         )
-                        await state.ws.broadcast(make_frame("bots", state.bots.list()))
+                        await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
                         logger.warning("Auto kill switch fired: %s (%s)", breach, result)
 
                 if account["equity"] > 0:
@@ -512,7 +553,7 @@ def _register_routes(app: FastAPI) -> None:
 
     @app.get("/api/bots")
     async def get_bots() -> list[dict]:
-        return st().bots.list()
+        return st().bots_with_activity()
 
     # --- v2: per-bot detail endpoints -----------------------------------
     def _not_found(bot_id: str) -> JSONResponse:
@@ -657,7 +698,7 @@ def _register_routes(app: FastAPI) -> None:
             await state.historical.run(ids, days, universe=payload.universe or 12)
             # push refreshed model overview so the UI updates when done.
             try:
-                await state.ws.broadcast(make_frame("bots", state.bots.list()))
+                await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
             except Exception:
                 pass
 
@@ -675,7 +716,7 @@ def _register_routes(app: FastAPI) -> None:
         detail = state.bots.update_config(bot_id, payload.model_dump(exclude_none=True))
         if detail is None:
             return _not_found(bot_id)
-        await state.ws.broadcast(make_frame("bots", state.bots.list()))
+        await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
         return detail
 
     @app.post("/api/bots/{bot_id}/start")
@@ -686,7 +727,7 @@ def _register_routes(app: FastAPI) -> None:
                 status_code=404,
                 content={"error": "bot not found", "detail": bot_id},
             )
-        await st().ws.broadcast(make_frame("bots", st().bots.list()))
+        await st().ws.broadcast(make_frame("bots", st().bots_with_activity()))
         return {"ok": True, "bot": bot}
 
     @app.post("/api/bots/{bot_id}/stop")
@@ -697,8 +738,28 @@ def _register_routes(app: FastAPI) -> None:
                 status_code=404,
                 content={"error": "bot not found", "detail": bot_id},
             )
-        await st().ws.broadcast(make_frame("bots", st().bots.list()))
+        await st().ws.broadcast(make_frame("bots", st().bots_with_activity()))
         return {"ok": True, "bot": bot}
+
+    @app.post("/api/bots/start-all")
+    async def start_all_bots():
+        """Start every bot at once (Overview 'Start all')."""
+        state = st()
+        started = []
+        for b in state.bots.list():
+            await state.bots.start(b["id"])
+            started.append(b["id"])
+        await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
+        return {"ok": True, "started": started}
+
+    @app.post("/api/bots/stop-all")
+    async def stop_all_bots():
+        """Stop every bot at once."""
+        state = st()
+        for b in state.bots.list():
+            await state.bots.stop(b["id"])
+        await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
+        return {"ok": True}
 
     @app.get("/api/config")
     async def get_config() -> dict:
@@ -723,17 +784,24 @@ def _register_routes(app: FastAPI) -> None:
         await st().ws.broadcast(
             make_frame("log", {"level": "error", "msg": "KILL SWITCH triggered"})
         )
-        await st().ws.broadcast(make_frame("bots", st().bots.list()))
+        await st().ws.broadcast(make_frame("bots", st().bots_with_activity()))
         await st().ws.broadcast(make_frame("status", await st().status_payload()))
         return result
 
     @app.post("/api/kill/reset")
-    async def kill_reset() -> dict:
-        result = st().kill_switch.reset()
-        await st().ws.broadcast(
-            make_frame("log", {"level": "info", "msg": "kill switch reset"})
+    async def kill_reset(resume: bool = True) -> dict:
+        state = st()
+        result = state.kill_switch.reset()
+        # Resume the bots that were running when the kill halted them, so a
+        # reset doesn't silently leave bots off (pass ?resume=false to skip).
+        resumed = await state.bots.resume_halted() if resume else []
+        result["resumed"] = resumed
+        await state.ws.broadcast(
+            make_frame("log", {"level": "info",
+                               "msg": f"kill switch reset (resumed {len(resumed)} bots)"})
         )
-        await st().ws.broadcast(make_frame("status", await st().status_payload()))
+        await state.ws.broadcast(make_frame("status", await state.status_payload()))
+        await state.ws.broadcast(make_frame("bots", state.bots_with_activity()))
         return result
 
     @app.websocket("/ws")
@@ -751,7 +819,7 @@ def _register_routes(app: FastAPI) -> None:
             await state.ws.send_personal(
                 websocket, make_frame("positions", await state.positions_payload())
             )
-            await state.ws.send_personal(websocket, make_frame("bots", state.bots.list()))
+            await state.ws.send_personal(websocket, make_frame("bots", state.bots_with_activity()))
 
             while True:
                 msg = await websocket.receive_json()

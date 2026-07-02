@@ -189,6 +189,10 @@ class GridManager:
         # Respect margin cap too: total notional/leverage <= 50% available.
         margin_cap_notional = (available * 0.5 * bot.leverage) if available > 0 else max_symbol
         total_notional = min(max_symbol, margin_cap_notional, equity * bot.leverage)
+        # Explicit investment cap (USDT) for the whole grid, if the user set one.
+        invest = float(bot.config.get("investment_usdt", 0.0) or 0.0)
+        if invest > 0:
+            total_notional = min(total_notional, invest)
         if total_notional <= 0:
             return False
 
